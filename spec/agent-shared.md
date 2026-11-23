@@ -186,7 +186,8 @@ For a repository's `.shared`, the repository's own files are cleaned too.
 | The agent table | an integer, `1` | `version` of `agents.json` |
 | An agent | the agent's own version | `checked` of its row |
 
-When the installed version of an agent is outside its row's `checked` range, a tool writes nothing for that agent and says so, until the row is checked again.
+When the installed version of an agent is older than `from` of its row's `checked`, a tool writes nothing for that agent, leaves what it placed before as it is, and says so.
+When the version is newer than `to`, or cannot be read, the tool writes as before and says so, since agents release often and a newer version mostly keeps the shapes the row was checked against.
 
 ## Relation to existing specs
 
