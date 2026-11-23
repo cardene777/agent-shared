@@ -77,6 +77,7 @@ chmod +x "$T/bin/codex"
 # hold the user's own entries.
 fresh() {
   export PATH="$BASE_PATH"
+  rm -rf "$T/version-bin"
   export HOME="$T/home-$1"
   export AGENT_SHARED_CODEX_BIN="$T/bin/codex"
   export STUB_LOG="$HOME/codex-calls.jsonl"
@@ -115,6 +116,19 @@ copilot_installed() {
   printf '#!/bin/sh\nexit 0\n' > "$T/copilot-bin/copilot"
   chmod +x "$T/copilot-bin/copilot"
   export PATH="$T/copilot-bin:$BASE_PATH"
+}
+
+# Puts a stand-in for the agent command $1 first on PATH, printing $2 when asked for its version, or nothing when
+# $2 is empty. fresh takes it off again.
+agent_version() {
+  mkdir -p "$T/version-bin"
+  if [ -n "$2" ]; then
+    printf '#!/bin/sh\necho "%s"\n' "$2" > "$T/version-bin/$1"
+  else
+    printf '#!/bin/sh\nexit 0\n' > "$T/version-bin/$1"
+  fi
+  chmod +x "$T/version-bin/$1"
+  case ":$PATH:" in *":$T/version-bin:"*) ;; *) export PATH="$T/version-bin:$PATH" ;; esac
 }
 
 # Runs agent-shared from the package source in $RUN_DIR. Output goes to $T/out, the exit code to $rc.
@@ -1242,6 +1256,78 @@ definition_emptied_folders() {
   done
 }
 
+# Codex placed at a checked version, then found older than `from`: nothing of Codex changes, Claude Code is still
+# written, and once Codex is back inside the range the next deploy writes it again.
+version_older() {
+  fresh version-older
+  agent_version codex 'codex-cli 0.171.0'
+  deployed || return 1
+  cp "$HOME/.codex/hooks.json" "$T/version-older-hooks.json"
+  cp "$HOME/.codex/AGENTS.md" "$T/version-older-agents.md"
+  printf '# Three\nRule three.\n' > "$HOME/.shared/rules/three.md"
+  mkdir -p "$HOME/.shared/skills/gamma"
+  printf -- '---\nname: gamma\ndescription: Gamma.\n---\nGamma.\n' > "$HOME/.shared/skills/gamma/SKILL.md"
+  agent_version codex 'codex-cli 0.100.0'
+  deployed || return 1
+  cmp -s "$HOME/.codex/hooks.json" "$T/version-older-hooks.json" && cmp -s "$HOME/.codex/AGENTS.md" "$T/version-older-agents.md" \
+    || { why="Codex's hooks.json or AGENTS.md changed while Codex was older than from"; return 1; }
+  [ ! -e "$HOME/.agents/skills/gamma" ] || { why="the new skill was placed for Codex while it was older than from"; return 1; }
+  links_to "$HOME/.agents/skills/alpha" "$HOME/.shared/skills/alpha" || { why="Codex's skill link placed before is gone"; return 1; }
+  links_to "$HOME/.claude/skills/gamma" "$HOME/.shared/skills/gamma" && links_to "$HOME/.claude/rules/three.md" "$HOME/.shared/rules/three.md" \
+    || { why="Claude Code was not written in the same run"; return 1; }
+  grep -qF '0.100.0' "$T/out" && grep -qF '0.124.0' "$T/out" || { why="the run did not name Codex's version and from: $(cat "$T/out" | tr '\n' ' ')"; return 1; }
+  agent_version codex 'codex-cli 0.171.0'
+  deployed || return 1
+  links_to "$HOME/.agents/skills/gamma" "$HOME/.shared/skills/gamma" && grep -q 'Rule three.' "$HOME/.codex/AGENTS.md" \
+    || { why="back inside the range, the next deploy did not write Codex"; return 1; }
+}
+
+version_newer() {
+  fresh version-newer
+  agent_version claude '2.1.999 (Claude Code)'
+  deployed || return 1
+  links_to "$HOME/.claude/skills/alpha" "$HOME/.shared/skills/alpha" && grep -q 'guard.sh' "$HOME/.claude/settings.json" \
+    || { why="Claude Code was not written"; return 1; }
+  grep -qF '2.1.999' "$T/out" && grep -qF '2.1.330' "$T/out" || { why="the run did not name Claude Code's version and to: $(cat "$T/out" | tr '\n' ' ')"; return 1; }
+}
+
+version_unreadable() {
+  fresh version-unreadable
+  agent_version claude ''
+  deployed || return 1
+  links_to "$HOME/.claude/skills/alpha" "$HOME/.shared/skills/alpha" || { why="Claude Code was not written when its version printed nothing"; return 1; }
+  grep -i 'could not read' "$T/out" | grep -q 'Claude Code' || { why="the run did not say Claude Code's version could not be read: $(cat "$T/out" | tr '\n' ' ')"; return 1; }
+  # Without the command on PATH at all.
+  fresh version-missing
+  export PATH="$(printf '%s' "$BASE_PATH" | tr ':' '\n' | while IFS= read -r dir; do [ -x "$dir/claude" ] || printf '%s:' "$dir"; done)"
+  export PATH="${PATH%:}"
+  deployed || return 1
+  links_to "$HOME/.claude/skills/alpha" "$HOME/.shared/skills/alpha" || { why="Claude Code was not written without its command"; return 1; }
+  grep -i 'could not read' "$T/out" | grep -q 'Claude Code' || { why="the run did not say Claude Code's version could not be read without its command"; return 1; }
+}
+
+version_inside() {
+  fresh version-inside
+  agent_version claude '2.1.330 (Claude Code)'
+  agent_version codex 'codex-cli 0.171.0'
+  deployed || return 1
+  links_to "$HOME/.claude/skills/alpha" "$HOME/.shared/skills/alpha" && links_to "$HOME/.agents/skills/alpha" "$HOME/.shared/skills/alpha" \
+    || { why="Claude Code or Codex was not written"; return 1; }
+  ! grep -i -E 'version|2\.1\.330|0\.171\.0' "$T/out" > /dev/null || { why="the run printed a version line: $(grep -i -E 'version|2\.1\.330|0\.171\.0' "$T/out" | head -2 | tr '\n' ' ')"; return 1; }
+}
+
+definition_versions() {
+  local f older newer
+  for f in spec/agent-shared.md README.md spec/agent-shared.ja.md README.ja.md; do
+    case "$f" in
+      *.ja.md) older='`from`より古い'; newer='`to`より新しい' ;;
+      *) older='older than `from`'; newer='newer than `to`' ;;
+    esac
+    grep -qF "$older" "$ROOT/$f" && grep -qF "$newer" "$ROOT/$f" \
+      || { why="$f does not say which versions stop the writes ($older, $newer)"; return 1; }
+  done
+}
+
 readmes_name_copilot() {
   local f
   for f in README.md README.ja.md; do
@@ -1687,6 +1773,11 @@ check "taking out the last skill link removes its emptied folder" emptied_skill_
 check "remove leaves no empty folder in the repository" remove_repo_folders
 check "a folder holding the person's file stays" person_file_folder
 check "the definition and the READMEs say emptied folders are removed" definition_emptied_folders
+check "deploy writes nothing for an agent older than its checked versions" version_older
+check "deploy writes an agent newer than its checked versions and names it" version_newer
+check "deploy writes an agent whose version cannot be read and says so" version_unreadable
+check "deploy writes an agent inside its checked versions without a version line" version_inside
+check "the definition and the READMEs say which versions stop the writes" definition_versions
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]
