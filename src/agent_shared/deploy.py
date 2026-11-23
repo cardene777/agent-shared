@@ -181,8 +181,10 @@ def checked_rows(table, where):
         problem = None
         if not isinstance(row, dict) or not isinstance(row.get("name"), str) or not row["name"]:
             problem = "a row has no name"
-        elif not isinstance(row.get("skills"), str):
-            problem = "the row {} has no skills folder".format(row["name"])
+        elif "skills" in row and not isinstance(row["skills"], str):
+            problem = "the skills folder of {} is not a path".format(row["name"])
+        elif "needs" in row and not isinstance(row["needs"], str):
+            problem = "the needs of {} is not a path".format(row["name"])
         elif "repo_skills" in row and not isinstance(row["repo_skills"], str):
             problem = "the repo_skills of {} is not a path".format(row["name"])
         elif "rules" in row and not (isinstance(row["rules"], dict) and isinstance(row["rules"].get("place"), str)
@@ -191,6 +193,8 @@ def checked_rows(table, where):
         elif "hooks" in row and not (isinstance(row["hooks"], dict) and isinstance(row["hooks"].get("file"), str)
                                      and row["hooks"].get("trust", TRUST_KINDS[0]) in TRUST_KINDS):
             problem = "the hooks of {} need a file".format(row["name"])
+        elif "hooks" in row and "version" in row["hooks"] and type(row["hooks"]["version"]) is not int:
+            problem = "the version of the hook file of {} is not a whole number".format(row["name"])
         elif "plugins" in row and row["plugins"] not in PLUGIN_KINDS:
             problem = "the plugins of {} is not one of {}".format(row["name"], ", ".join(PLUGIN_KINDS))
         if problem:
@@ -614,10 +618,11 @@ def agent_table():
 
 
 def agent_places(row):
-    """Where one agent of the table keeps what agent-shared places in the home folder: the skills folder,
-    the rules place and form (None without rules), and the hook file (None without hooks)."""
+    """Where one agent of the table keeps what agent-shared places in the home folder: the skills folder
+    (None for an agent that reads another row's folder), the rules place and form (None without rules),
+    and the hook file (None without hooks)."""
     rules = row.get("rules")
-    return (expand(row["skills"]),
+    return (expand(row["skills"]) if "skills" in row else None,
             (expand(rules["place"]), rules["form"]) if rules else None,
             expand(row["hooks"]["file"]) if "hooks" in row else None)
 
@@ -716,7 +721,7 @@ def placed(source_path):
         if rules_at:
             place, form = rules_at
             rules = linked_names(links, place) if form == "link" else block_rule_names(place, source.id, refusals)
-        agents[row["name"]] = {"skills": linked_names(links, skills_dir), "rules": rules,
+        agents[row["name"]] = {"skills": linked_names(links, skills_dir) if skills_dir else [], "rules": rules,
                                "hooks": marked_hooks(hook_file, source.id, refusals) if hook_file else []}
         # Only an agent the list names items for gets the key, so the shape stays as before without a list.
         left_out = off.items(source, row["name"])
@@ -792,17 +797,24 @@ def deploy(extra_sources, repo_argument):
     blocks = {}
     hook_files = {}
     plugin_cache = {}
+    written_agents = []
     for row in table:
+        # An agent many people do not use waits for its own folder, so its files appear only where it is installed.
+        # The last line names only the agents written, so a skipped one prints no line of its own on every run.
+        if "needs" in row and not os.path.isdir(expand(row["needs"])):
+            continue
+        written_agents.append(row["name"])
         kind = row.get("plugins")
         if kind and kind not in plugin_cache:
             plugin_cache[kind] = (claude_plugin_skills if kind == "claude" else codex_plugin_skills)(warnings)
         plugins = plugin_cache.get(kind, {})
         skills_dir, rules_at, hook_file = agent_places(row)
-        for name, (path, source) in skills.items():
-            if name in plugins:
-                notes.append("skipped the skill {} for {}: the plugin {} already has it".format(name, row["name"], plugins[name]))
-            else:
-                wanted[os.path.join(skills_dir, name)] = (path, source)
+        if skills_dir is not None:
+            for name, (path, source) in skills.items():
+                if name in plugins:
+                    notes.append("skipped the skill {} for {}: the plugin {} already has it".format(name, row["name"], plugins[name]))
+                else:
+                    wanted[os.path.join(skills_dir, name)] = (path, source)
         if rules_at:
             place, form = rules_at
             kept = {name: (path, source) for name, (path, source) in rules.items()
@@ -814,7 +826,8 @@ def deploy(extra_sources, repo_argument):
                 blocks[place] = {source.id: sorted((name, path) for name, (path, owner) in kept.items() if owner is source)
                                  for source in sources}
         if hook_file:
-            entry = hook_files.setdefault(hook_file, {"trust": row["hooks"].get("trust"), "groups": {}, "commands": set()})
+            entry = hook_files.setdefault(hook_file, {"trust": row["hooks"].get("trust"), "version": row["hooks"].get("version"),
+                                                      "groups": {}, "commands": set()})
             groups, commands = agent_hook_groups(declared, row["name"], off)
             entry["commands"] |= commands
             for event, added in groups.items():
@@ -869,6 +882,9 @@ def deploy(extra_sources, repo_argument):
             refusals.append("{} has a hook that agent-shared did not place with the same command: {} {}"
                             .format(shown(place), event, command))
         new = with_hooks(data, run_ids, entry["groups"])
+        # A file the agent reads only with a top-level version gets it first, as the agent's docs show it.
+        if entry["version"] is not None and new.get("hooks") and "version" not in new:
+            new = dict({"version": entry["version"]}, **new)
         if new != data:
             hooks_text[place] = json.dumps(new, ensure_ascii=False, indent=2) + "\n"
 
@@ -921,5 +937,5 @@ def deploy(extra_sources, repo_argument):
         print("warning: " + line)
     print("deployed {} skills and {} rules from {} source{} to {}".format(
         len(skills) + (len(repo.skills()) if repo else 0), len(rules), len(run), "" if len(run) == 1 else "s",
-        ", ".join(agent_names)))
+        ", ".join(written_agents)))
     return 0

@@ -55,8 +55,11 @@ agent-shared deploy
 |---|---|---|---|---|
 | Claude Code | `~/.claude/skills`にスキルごとのリンク | `~/.claude/rules`にルールごとのリンク | `~/.claude/settings.json` | `.claude/skills` |
 | Codex | `~/.agents/skills`にスキルごとのリンク | `~/.codex/AGENTS.md`の中の1つの囲み | `~/.codex/hooks.json` | `.agents/skills` |
+| GitHub Copilot CLI | Codexの`~/.agents/skills`を読む | `~/.copilot/copilot-instructions.md`の中の1つの囲み | `~/.copilot/hooks/agent-shared.json` | |
 
-GitHub Copilot CLIとGemini CLIも、`~/.agents/skills`のスキルを読みます。
+GitHub Copilot CLIへは、`~/.copilot`が在る時だけルールとhookを書くので、入れていないPCには何も作りません。
+hookのファイルはClaude Codeのhookと同じ形の頭に`"version": 1`を置いた物で、Copilot CLIはこの形の時にClaude Codeと同じ道具の名前をscriptへ渡すため、同じhookがそのまま動きます。
+Gemini CLIも、`~/.agents/skills`のスキルを読みます。
 Codexは古い置き場の`~/.codex/skills`も読み続けているため、コマンドはそこに何も置かず、同じスキルが2回並ばないようにします。
 Codexは信頼したhookだけを動かすので、コマンドはCodexの`/hooks`の画面と同じやり方で、`codex app-server`を通して信頼の印を書きます。
 `codex`のコマンドが無い時と答えない時は、そのことを出し、Codexで`/hooks`を1度開くよう案内します。
@@ -79,10 +82,11 @@ Codexは信頼したhookだけを動かすので、コマンドはCodexの`/hook
 | 欄 | 中身 |
 |---|---|
 | `name` | エージェントの名前。`hooks.json`の`tools`もこの名前を書く |
-| `skills` | スキルごとのリンクを置くフォルダー |
+| `skills` | スキルごとのリンクを置くフォルダー。無い行はスキルを置かない |
+| `needs` | 在る時だけその行を書くフォルダー。例は`~/.copilot` |
 | `repo_skills` | リポジトリの中で、そのリポジトリのスキルのリンクを置くフォルダー |
 | `rules` | `place`と`form`。`link`は`place`のフォルダーにルールごとのリンクを置き、`block`は`place`のファイルの1つの囲みにルールを書く |
-| `hooks` | `file`にhookを書く。`trust: codex-app-server`を書くと、Codexの信頼の印も書く |
+| `hooks` | `file`にhookを書く。`version`は、hookを持つファイルの頭に書く。`trust: codex-app-server`を書くと、Codexの信頼の印も書く |
 | `plugins` | `claude`か`codex`。そのエージェントに入れたプラグインが既に持つスキルは、そのエージェントへ配らない |
 
 ## 配る元を増やす

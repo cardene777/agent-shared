@@ -55,8 +55,11 @@ agent-shared deploy
 |---|---|---|---|---|
 | Claude Code | a link per skill in `~/.claude/skills` | a link per rule in `~/.claude/rules` | `~/.claude/settings.json` | `.claude/skills` |
 | Codex | a link per skill in `~/.agents/skills` | one block in `~/.codex/AGENTS.md` | `~/.codex/hooks.json` | `.agents/skills` |
+| GitHub Copilot CLI | reads Codex's `~/.agents/skills` | one block in `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/agent-shared.json` | |
 
-GitHub Copilot CLI and Gemini CLI read the skills in `~/.agents/skills` too.
+GitHub Copilot CLI gets its rules and hooks only when `~/.copilot` exists, so nothing is created for it on a computer without it.
+Its hook file takes the same shape as Claude Code's hooks with `"version": 1` on top, and Copilot CLI passes Claude Code's tool names to the scripts in that shape, so the same hooks run unchanged.
+Gemini CLI reads the skills in `~/.agents/skills` too.
 Codex also reads `~/.codex/skills`, which Codex keeps only for older setups, so the command places nothing there and a skill is not listed twice.
 Codex runs a hook only after you trust it, so the command writes that trust through `codex app-server`, the same way Codex's `/hooks` screen does.
 When the `codex` command is missing or does not answer, the command says so and asks you to open `/hooks` in Codex once.
@@ -79,10 +82,11 @@ A row in `~/.shared/agents.json` with a new name adds an agent, and a row with t
 | Field | Meaning |
 |---|---|
 | `name` | The agent's name, also used by `tools` in `hooks.json` |
-| `skills` | The folder that gets a link per skill |
+| `skills` | The folder that gets a link per skill. A row without it places no skills |
+| `needs` | A folder that must exist for the row to be written, such as `~/.copilot` |
 | `repo_skills` | The folder in a repository that gets a link per repository skill |
 | `rules` | `place` and `form`: `link` puts a link per rule in the folder `place`, `block` writes the rules in one block of the file `place` |
-| `hooks` | `file` gets the hooks. `trust: codex-app-server` also writes Codex's trust for them |
+| `hooks` | `file` gets the hooks. `version` is written on top of a file that holds hooks. `trust: codex-app-server` also writes Codex's trust for them |
 | `plugins` | `claude` or `codex`: skills that a plugin installed in that agent already has are not placed for it |
 
 ## More than one source
