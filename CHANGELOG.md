@@ -3,6 +3,11 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
+## Unreleased
+
+- Two proposals to Agent Plugins, in `docs/proposals/`: rules as a portable plugin component, and the hook events each client version supports with a report of every hook a client does not run
+- The definition's relation section names the portable hooks of Agent Plugins v1.1 and the two proposals
+
 ## [0.2.3] - 2026-11-23
 
 - `deploy` reads each agent's version with the `checked` command of its row: an agent older than `from` gets nothing written and keeps what was placed before, and an agent newer than `to` or whose version cannot be read is written as before; the run names each of them
