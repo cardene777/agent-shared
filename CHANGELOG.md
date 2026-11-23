@@ -3,7 +3,7 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
-## Unreleased
+## [0.2.2] - 2026-11-23
 
 - When `deploy` or `remove` takes a file or a link out, the folders it leaves empty go too, up to an agent's folder right under the home folder, such as `~/.copilot`, and the repository root, which stay
 
