@@ -204,5 +204,6 @@ Codexは、利用者がCodexの中で信頼したリポジトリのhookだけを
 | `AGENTS.md` | リポジトリの根の1つのルールのファイル | リポジトリのルールはその中の囲みに書く |
 | Claude Codeのhook | hookの形とイベント | hookの宣言はこの形 |
 | GitHub Copilot CLIとCodexのhook | Claude Codeの入れ子の形を読むhookのファイル | 宣言のまま書き、各エージェントが要る版と信頼の印を足す |
-| Agent Plugins 1.0.0 | スキルとMCPを持ち運べるプラグイン。hookとルールは持ち運べない物として外している | この定義を、hookとルールを持ち運べる形として持ち込む |
+| Agent Plugins 1.0.0 | スキルとMCPを持ち運べるプラグイン。hookとルールは持ち運べない物として外している | ルールを持ち運べる部品にする案を`docs/proposals/agent-plugins-portable-rules.md`で出す |
+| Agent Plugins v1.1 | プラグインの根の`hooks.json`に、`command`と`args`で5つのイベントのhookを書く、持ち運べるhook | v1.1が出た後に、agent-sharedもこの形を配る元として読む(#25)。v1.1に無いイベントのためにClaude Codeの形も残す。エージェントの版ごとに読めるイベントの案を`docs/proposals/agent-plugins-hook-events.md`で出す |
 | rulesync、APM、AgentsMesh | 自分のhookの形を各エージェントの形へ直す道具 | それぞれの独自の形の代わりに、公開した1つの形と1つの印を渡す |
