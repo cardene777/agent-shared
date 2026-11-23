@@ -11,6 +11,7 @@
 `agent-shared`は、1つのフォルダーに置いたスキルとルールとhookを、PCの全てのコーディングエージェントへ配ります。
 スキルとルールはそのフォルダーの1つの実体を指すリンクなので、直すと全てのエージェントに一度に届きます。
 フォルダーはPCの中に残り、コマンドはネットワークに何も送りません。
+配る元を各エージェントへ置く決まりは、公開の定義[spec/agent-shared.ja.md](spec/agent-shared.ja.md)に書いてあり、他の道具も同じ物を置けます。
 
 ## インストール
 
@@ -64,16 +65,49 @@ Codexは古い置き場の`~/.codex/skills`も読み続けているため、コ�
 Codexは信頼したhookだけを動かすので、コマンドはCodexの`/hooks`の画面と同じやり方で、`codex app-server`を通して信頼の印を書きます。
 `codex`のコマンドが無い時と答えない時は、そのことを出し、Codexで`/hooks`を1度開くよう案内します。
 
-## リポジトリのスキル
+## リポジトリのスキルとルールとhook
 
-リポジトリは、自分のスキルを`.shared/skills`に置けます。
-リポジトリの中か`--repo <folder>`を付けて`agent-shared deploy`を打つと、そのリポジトリの`.claude/skills`と`.agents/skills`に相対のリンクを置くので、どのクローンでもリンクが働きます。
-リポジトリのルールは`AGENTS.md`に置いたままにし、`CLAUDE.md`から`@AGENTS.md`の1行で読ませます。
+リポジトリは、自分のスキルとルールとhookを`.shared`に置けます。
+リポジトリの中か`--repo <folder>`を付けて`agent-shared deploy`を打つと、リポジトリ自身の中へ置くので、どのクローンにも入ります。
+
+| 置く物 | 場所 |
+|---|---|
+| スキル | `.claude/skills`と`.agents/skills`に相対のリンク |
+| ルール | リポジトリの`AGENTS.md`の1つの囲み。`CLAUDE.md`は`@AGENTS.md`の1行で読む |
+| hook | `.claude/settings.json`と`.codex/hooks.json`と`.github/hooks/agent-shared.json`。リポジトリの根から`.shared`を名指す |
+
+リポジトリのhookは、下のとおり、その`.shared`を1度認めた後にだけ置きます。
+Codexは信頼したリポジトリのhookだけを動かすので、コマンドはCodexで`/hooks`を1度開くよう案内します。
+
+## 配る元のhookを認める
+
+hookは命令を動かすので、コマンドは`~/.shared`以外の配る元のhookを、その配る元を1度認めた後にだけ置きます。
+
+```
+agent-shared approve --source ~/apps/my-tool/.shared
+```
+
+`agent-shared approve`は、配る元の全部のhookの命令を出し、`y`と答えるよう求めます。
+それまでの間、`agent-shared deploy`は配る元のスキルとルールを置き、hookは1つも置かず、認める命令を出します。
+`~/.shared`と、認める手続きができる前から記録にあった配る元は、認めた扱いです。
+
+## 配る元を外す
+
+`agent-shared remove --source <folder>`は、1つの配る元が全エージェントに置いた物を全部外します。
+外すのは、リンク、ルールの囲み、印の付いたhook、それらのhookへのCodexの信頼の印です。
+印と記録だけを読むので、フォルダーを消した後でも外せ、手で書いた物には触れません。
+
+## 配る元を確かめる
+
+`agent-shared check --source <folder>`は、配る元を定義に照らして確かめ、何も書きません。
+表のどのエージェントも読まないイベント、命令を持たないhook、名前の無い`agents.json`の行のような問題を`<file>: <entry>: <problem>`の形で1行ずつ出し、1つでもあれば終了コード1で終わります。
+[examples/basic](examples/basic)は、これを通る配る元の例です。
 
 ## エージェントの表
 
-コマンドは、各エージェントの置き場を並べた表を持っています。
+コマンドは、各エージェントの置き場を並べた表[src/agent_shared/agents.json](src/agent_shared/agents.json)を持ち、定義はこの表を全部の道具向けに公開しています。
 `~/.shared/agents.json`に新しい名前の行を書くとエージェントが増え、既定の行と同じ名前の行を書くとその行を置き換えます。
+行が並べていないイベントのhookは、そのエージェントへ書かず、実行の出力でhookとエージェントを名指します。
 
 ```json
 {"version": 1, "agents": [{"name": "My agent", "skills": "~/.my-agent/skills"}]}
@@ -86,7 +120,11 @@ Codexは信頼したhookだけを動かすので、コマンドはCodexの`/hook
 | `needs` | 在る時だけその行を書くフォルダー。例は`~/.copilot` |
 | `repo_skills` | リポジトリの中で、そのリポジトリのスキルのリンクを置くフォルダー |
 | `rules` | `place`と`form`。`link`は`place`のフォルダーにルールごとのリンクを置き、`block`は`place`のファイルの1つの囲みにルールを書く |
+| `repo_rules` | `rules`と同じ。`place`はリポジトリの根からのpath |
 | `hooks` | `file`にhookを書く。`version`は、hookを持つファイルの頭に書く。`trust: codex-app-server`を書くと、Codexの信頼の印も書く |
+| `repo_hooks` | `hooks`と同じ。`file`はリポジトリの根からのpath |
+| `events` | エージェントが読むhookのイベント。無い行は全部のイベントを読む |
+| `checked` | `command`は入っている版を出す命令、`from`と`to`はその行を確かめた版 |
 | `plugins` | `claude`か`codex`。そのエージェントに入れたプラグインが既に持つスキルは、そのエージェントへ配らない |
 
 ## 配る元を増やす
@@ -109,7 +147,7 @@ Claude CodeかCodexに入れたプラグインが、フォルダーのスキル�
 |---|---|
 | 読む物 | 配る元のフォルダー、`~/.claude/plugins/installed_plugins.json`、`~/.claude/settings.json`の`enabledPlugins`、`~/.codex/config.toml`、`~/.codex/plugins/cache`の下のスキルのフォルダー。`placed`は記録とエージェントの表の置き場だけを読む |
 | 書く物 | エージェントの表の置き場。自分が置いた物だけ |
-| 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクを1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧。`AGENT_SHARED_STATE`でフォルダーを変えられる |
+| 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧。`AGENT_SHARED_STATE`でフォルダーを変えられる |
 | 動かす物 | `codex app-server`。置いたhookにCodexの信頼の印を書くため。`AGENT_SHARED_CODEX_BIN`で別の`codex`のコマンドを指せる |
 | 送る物 | ネットワークには何も送らない |
 

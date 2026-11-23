@@ -431,6 +431,7 @@ hooks_every_source() {
   fresh hooks-sources
   mkdir -p "$T/extra-source"
   printf '%s\n' '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo extra"}]}]}}' > "$T/extra-source/hooks.json"
+  approve_source "$T/extra-source"
   hooks_run --agent "Claude Code" --source "$T/extra-source"
   [ "$rc" = 0 ] || { why="hooks exited $rc: $(tail -1 "$T/hooks.err")"; return 1; }
   grep -q 'echo extra' "$T/hooks.out" || { why="the hook of the --source folder was not printed"; return 1; }
@@ -493,6 +494,14 @@ full_source() {
   ]
 }}
 JSON
+  # A source other than ~/.shared gets its hooks placed only once the person approves it.
+  [ -n "${NO_APPROVE:-}" ] || approve_source "$SRC"
+}
+
+# Approves the source folder $1, answering yes. Output goes to $T/approve.out, the exit code to $rc.
+approve_source() {
+  printf 'y\n' | (cd "$RUN_DIR" && PYTHONPATH="$PKG/src" python3 -m agent_shared approve --source "$1") > "$T/approve.out" 2>&1
+  rc=$?
 }
 
 # Reads $T/placed.out and runs the Python check on stdin with `out` (the JSON, keys in order), `src`,
@@ -845,6 +854,7 @@ off_named_source_only() {
   printf '#!/bin/sh\nexit 0\n' > "$SRC/hooks/guard.sh"
   printf '%s\n' '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh"}]}]}}' > "$SRC/hooks.json"
   run off --source "$HOME/.shared" --agent Codex hooks/guard.sh
+  approve_source "$SRC"
   run deploy --source "$SRC"
   [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
   marked_commands "$HOME/.codex/hooks.json" Stop | grep -q "^bash $SRC/hooks/guard.sh$" \
@@ -1095,6 +1105,333 @@ readmes_name_copilot() {
   done
 }
 
+# The definition: spec/agent-shared.md is normative and spec/agent-shared.ja.md is its translation, so the
+# two keep the same headings, table rows, and code blocks.
+definition_pair() {
+  [ -f "$ROOT/spec/agent-shared.md" ] && [ -f "$ROOT/spec/agent-shared.ja.md" ] \
+    || { why="spec/agent-shared.md or spec/agent-shared.ja.md is missing"; return 1; }
+  python3 - "$ROOT/spec/agent-shared.md" "$ROOT/spec/agent-shared.ja.md" <<'PY' || { why="$(cat "$T/pair.why")"; return 1; }
+import os, re, sys
+def shape(path):
+    text = open(path, encoding="utf-8").read()
+    blocks = re.findall(r"^```[^\n]*\n(.*?)^```", text, re.M | re.S)
+    body = re.sub(r"^```.*?^```", "", text, flags=re.M | re.S).splitlines()
+    levels = [len(re.match(r"#+", line).group()) for line in body if re.match(r"#{1,6} ", line)]
+    rows = [line for line in body if line.startswith("|") and not re.fullmatch(r"\|[-| :]+\|", line)]
+    return levels, len(rows), blocks
+en, ja = shape(sys.argv[1]), shape(sys.argv[2])
+problem = None
+if en[0] != ja[0]:
+    problem = "the headings differ: levels %r and %r" % (en[0], ja[0])
+elif en[1] != ja[1]:
+    problem = "the table rows differ: %d and %d" % (en[1], ja[1])
+elif en[2] != ja[2]:
+    problem = "the code blocks differ"
+if problem:
+    open(os.environ["T"] + "/pair.why", "w").write(problem)
+    sys.exit(1)
+PY
+}
+
+definition_sections() {
+  local spec="$ROOT/spec/agent-shared.md" name
+  [ -f "$spec" ] || { why="spec/agent-shared.md is missing"; return 1; }
+  for name in "Source folder" "Hook declaration" "Agent table" "Marks and records" "Approving sources" \
+      "Placing into a repository" "Taking everything out" "Versions" "Relation to existing specs"; do
+    grep -q -i -E "^#{2,3} $name\$" "$spec" || { why="spec/agent-shared.md has no section $name"; return 1; }
+  done
+  grep -q -E '^Definition version `[0-9]{4}-[0-9]{2}-[0-9]{2}`' "$spec" || { why="spec/agent-shared.md has no dated definition version"; return 1; }
+}
+
+table_rows() {
+  grep -qF 'src/agent_shared/agents.json' "$ROOT/spec/agent-shared.md" 2>/dev/null \
+    || { why="the definition does not name src/agent_shared/agents.json as the agent table"; return 1; }
+  python3 - "$PKG/src/agent_shared/agents.json" <<'PY' || { why="$(cat "$T/table.why")"; return 1; }
+import json, os, sys
+problem = None
+for row in json.load(open(sys.argv[1]))["agents"]:
+    events, checked = row.get("events"), row.get("checked")
+    if not isinstance(events, list) or not events or not all(isinstance(e, str) and e for e in events):
+        problem = "the row %s lists no events" % row.get("name")
+    elif not isinstance(checked, dict) or not all(isinstance(checked.get(k), str) and checked[k] for k in ("from", "to")):
+        problem = "the row %s has no checked versions from and to" % row.get("name")
+    if problem:
+        break
+if problem:
+    open(os.environ["T"] + "/table.why", "w").write(problem)
+    sys.exit(1)
+PY
+}
+
+check_run() {
+  (cd "$RUN_DIR" && PYTHONPATH="$PKG/src" python3 -m agent_shared check "$@") > "$T/check.out" 2>&1
+  rc=$?
+}
+
+check_example() {
+  fresh check-example
+  check_run --source "$ROOT/examples/basic"
+  [ "$rc" = 0 ] || { why="check exited $rc: $(tail -1 "$T/check.out")"; return 1; }
+}
+
+# Each wrong declaration sits in a source of its own, so each refusal is seen.
+check_refuses() {
+  fresh check-refuses
+  local bad="$T/bad-source"
+  mkdir -p "$bad/event" "$bad/command" "$bad/row"
+  printf '{"hooks": {"NoSuchEvent": [{"hooks": [{"type": "command", "command": "echo x"}]}]}}\n' > "$bad/event/hooks.json"
+  printf '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command"}]}]}}\n' > "$bad/command/hooks.json"
+  printf '{"version": 1, "agents": [{"skills": "~/.nameless/skills"}]}\n' > "$bad/row/agents.json"
+  check_run --source "$bad/event"
+  [ "$rc" = 1 ] && grep 'hooks.json' "$T/check.out" | grep -q 'NoSuchEvent' \
+    || { why="an unknown event: check exited $rc: $(tail -1 "$T/check.out")"; return 1; }
+  check_run --source "$bad/command"
+  [ "$rc" = 1 ] && grep 'hooks.json' "$T/check.out" | grep -qF 'hooks.PreToolUse[0].hooks[0]' \
+    || { why="a hook without a command: check exited $rc: $(tail -1 "$T/check.out")"; return 1; }
+  check_run --source "$bad/row"
+  [ "$rc" = 1 ] && grep 'agents.json' "$T/check.out" | grep -qF 'agents[0]' \
+    || { why="a row without a name: check exited $rc: $(tail -1 "$T/check.out")"; return 1; }
+}
+
+# The definition's table of places, read for every skill, rule, and hook of the example.
+example_deploy() {
+  fresh example
+  rm -rf "$HOME/.shared"
+  mkdir -p "$HOME/.copilot"
+  local ex="$ROOT/examples/basic"
+  [ -d "$ex/skills" ] && [ -d "$ex/rules" ] && [ -f "$ex/hooks.json" ] || { why="examples/basic lacks skills, rules, or hooks.json"; return 1; }
+  approve_source "$ex"
+  run deploy --source "$ex"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  python3 - "$HOME" "$ex" <<'PY' || { why="$(cat "$T/example.why")"; return 1; }
+import json, os, sys
+home, ex = sys.argv[1:]
+real = os.path.realpath
+def fail(reason):
+    open(os.environ["T"] + "/example.why", "w").write(reason)
+    sys.exit(1)
+def marked(command):
+    return "\n" in command and command.rsplit("\n", 1)[1].startswith("# agent-shared")
+skills = sorted(n for n in os.listdir(os.path.join(ex, "skills")) if os.path.isfile(os.path.join(ex, "skills", n, "SKILL.md")))
+rules = sorted(n for n in os.listdir(os.path.join(ex, "rules")) if n.endswith(".md"))
+if not skills or not rules:
+    fail("the example has no skill or no rule")
+for name in skills:
+    for folder in (".claude/skills", ".agents/skills"):
+        place = os.path.join(home, folder, name)
+        if not os.path.islink(place) or real(place) != real(os.path.join(ex, "skills", name)):
+            fail("%s is not a link to the skill" % place)
+for name in rules:
+    place = os.path.join(home, ".claude/rules", name)
+    if not os.path.islink(place) or real(place) != real(os.path.join(ex, "rules", name)):
+        fail("%s is not a link to the rule" % place)
+    body = open(os.path.join(ex, "rules", name)).read().strip()
+    for path in (".codex/AGENTS.md", ".copilot/copilot-instructions.md"):
+        if body not in open(os.path.join(home, path)).read():
+            fail("the rule %s is not in the block of %s" % (name, path))
+declared = json.load(open(os.path.join(ex, "hooks.json")))["hooks"]
+for path in (".claude/settings.json", ".codex/hooks.json", ".copilot/hooks/agent-shared.json"):
+    events = json.load(open(os.path.join(home, path))).get("hooks", {})
+    for event, groups in declared.items():
+        for group in groups:
+            for hook in group["hooks"]:
+                want = hook["command"].replace("${CLAUDE_PLUGIN_ROOT}", ex)
+                got = [h["command"] for g in events.get(event, []) for h in g.get("hooks", [])]
+                if not any(marked(c) and c.startswith(want) for c in got):
+                    fail("%s has no marked %s hook %s" % (path, event, want))
+PY
+}
+
+# A row of the user's table that reads only PreToolUse, so the Stop hook of ~/.shared has no place in it.
+missing_event() {
+  fresh missing-event
+  printf '{"version": 1, "agents": [{"name": "Narrow", "skills": "~/.narrow/skills", "hooks": {"file": "~/.narrow/hooks.json"}, "events": ["PreToolUse"]}]}\n' \
+    > "$HOME/.shared/agents.json"
+  deployed || return 1
+  grep -q 'guard.sh' "$HOME/.narrow/hooks.json" 2>/dev/null || { why="the PreToolUse hook was not written for Narrow"; return 1; }
+  ! grep -q 'echo stop' "$HOME/.narrow/hooks.json" || { why="the Stop hook was written for an agent that lacks Stop"; return 1; }
+  grep -q 'echo stop' "$HOME/.claude/settings.json" || { why="the Stop hook is gone from Claude Code"; return 1; }
+  grep 'Narrow' "$T/out" | grep -q 'Stop' || { why="the run did not name the Stop hook and Narrow"; return 1; }
+}
+
+unapproved_source() {
+  fresh unapproved
+  NO_APPROVE=1 full_source unapproved
+  run deploy --source "$SRC"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  links_to "$HOME/.claude/skills/delta" "$SRC/skills/delta" || { why="the skill of the source was not placed"; return 1; }
+  links_to "$HOME/.claude/rules/three.md" "$SRC/rules/three.md" || { why="the rule of the source was not placed"; return 1; }
+  ! grep -qF "$SRC" "$HOME/.claude/settings.json" "$HOME/.codex/hooks.json" || { why="a hook of the source not approved was written"; return 1; }
+  grep -q 'guard.sh' "$HOME/.claude/settings.json" || { why="the hooks of ~/.shared are gone"; return 1; }
+  grep -F 'agent-shared approve --source' "$T/out" | grep -qF "$SRC" || { why="the run did not name the command that approves the source"; return 1; }
+  python3 - "$HOME" <<'PY' || { why="Codex was asked to trust a hook of the source not approved"; return 1; }
+import json, os, sys
+home = sys.argv[1]
+log = os.path.join(home, "codex-calls.jsonl")
+writes = [json.loads(l) for l in open(log)] if os.path.exists(log) else []
+writes = [m for m in writes if m.get("method") == "config/batchWrite"]
+data = json.load(open(os.path.join(home, ".codex/hooks.json")))
+place = os.path.join(home, ".codex/hooks.json")
+marked = {"%s:%s:%d:%d" % (place, e, gi, hi) for e, groups in data["hooks"].items() for gi, g in enumerate(groups)
+          for hi, h in enumerate(g["hooks"]) if "\n" in h["command"] and h["command"].rsplit("\n", 1)[1].startswith("# agent-shared")}
+for message in writes:
+    value = message["params"]["edits"][0]["value"]
+    if any(isinstance(v, dict) and v.get("trusted_hash") for k, v in value.items() if k not in marked):
+        sys.exit(1)
+PY
+}
+
+approve_then_deploy() {
+  fresh approve
+  NO_APPROVE=1 full_source approve
+  approve_source "$SRC"
+  [ "$rc" = 0 ] || { why="approve exited $rc: $(tail -1 "$T/approve.out")"; return 1; }
+  grep -qF "$SRC/hooks/check.sh" "$T/approve.out" && grep -q 'echo source-stop' "$T/approve.out" \
+    || { why="approve did not print the source's hook commands"; return 1; }
+  run deploy --source "$SRC"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  grep -qF "$SRC/hooks/check.sh" "$HOME/.claude/settings.json" || { why="the approved source's hook was not written"; return 1; }
+}
+
+# A record written before approving existed holds the source without an approval field.
+approved_before() {
+  fresh approved-before
+  NO_APPROVE=1 full_source before
+  local sid
+  sid="$(PYTHONPATH="$PKG/src" python3 -c 'import sys; from agent_shared.deploy import source_id; print(source_id(sys.argv[1]))' "$SRC")"
+  mkdir -p "$HOME/.local/share/agent-shared"
+  printf '{"version": 1, "sources": {"%s": {"path": "%s", "links": {}}}}\n' "$sid" "$SRC" > "$HOME/.local/share/agent-shared/placed.json"
+  run deploy --source "$SRC"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  grep -qF "$SRC/hooks/check.sh" "$HOME/.claude/settings.json" || { why="the hooks of a source placed before were not written"; return 1; }
+  grep -q 'guard.sh' "$HOME/.claude/settings.json" || { why="the hooks of ~/.shared were not written"; return 1; }
+}
+
+# A repository with .shared, the way find_repo looks for one.
+repo_with_shared() {
+  REPO="$T/repo-$1"
+  mkdir -p "$REPO/.git" "$REPO/.shared/rules" "$REPO/.shared/hooks"
+  printf '# Repo rule\nRepository rule.\n' > "$REPO/.shared/rules/repo.md"
+  printf '{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}}\n' \
+    > "$REPO/.shared/hooks.json"
+}
+
+repo_rules() {
+  fresh repo-rules
+  repo_with_shared rules
+  printf '# The repository\n\nKeep this line.\n' > "$REPO/AGENTS.md"
+  cp "$REPO/AGENTS.md" "$T/repo-agents-before.md"
+  run deploy --repo "$REPO"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  python3 - "$T/repo-agents-before.md" "$REPO/AGENTS.md" <<'PY' || { why="$(cat "$T/repo-rules.why")"; return 1; }
+import os, sys
+before, after = open(sys.argv[1]).read(), open(sys.argv[2]).read()
+lines = after.splitlines(keepends=True)
+begins = [i for i, line in enumerate(lines) if line.startswith("<!-- agent-shared begin")]
+ends = [i for i, line in enumerate(lines) if line.startswith("<!-- agent-shared end")]
+problem = None
+if len(begins) != 1 or len(ends) != 1 or begins[0] > ends[0]:
+    problem = "the repository's AGENTS.md does not have exactly one block"
+elif "".join(lines[:begins[0]]) + "".join(lines[ends[0] + 1:]) != before:
+    problem = "the lines outside the block changed"
+elif "Repository rule." not in after:
+    problem = "the block does not hold the repository's rule"
+if problem:
+    open(os.environ["T"] + "/repo-rules.why", "w").write(problem)
+    sys.exit(1)
+PY
+}
+
+repo_hooks() {
+  fresh repo-hooks
+  mkdir -p "$HOME/.copilot"
+  repo_with_shared hooks
+  approve_source "$REPO/.shared"
+  run deploy --repo "$REPO"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  python3 - "$REPO" <<'PY' || { why="$(cat "$T/repo-hooks.why")"; return 1; }
+import json, os, sys
+repo = sys.argv[1]
+def fail(reason):
+    open(os.environ["T"] + "/repo-hooks.why", "w").write(reason)
+    sys.exit(1)
+for path in (".claude/settings.json", ".codex/hooks.json", ".github/hooks/agent-shared.json"):
+    full = os.path.join(repo, path)
+    if not os.path.exists(full):
+        fail("%s was not written" % path)
+    data = json.load(open(full))
+    commands = [h["command"] for g in data.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", [])]
+    if not any(c.startswith("bash .shared/hooks/check.sh\n# agent-shared") for c in commands):
+        fail("%s has no marked hook running .shared/hooks/check.sh: %r" % (path, commands))
+    if path.startswith(".github") and data.get("version") != 1:
+        fail("%s has no version 1" % path)
+PY
+}
+
+remove_all() {
+  fresh remove-all
+  mkdir -p "$HOME/.copilot"
+  full_source removed
+  run deploy --source "$SRC"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  links_to "$HOME/.claude/skills/delta" "$SRC/skills/delta" && grep -qF "$SRC/hooks/check.sh" "$HOME/.claude/settings.json" \
+    || { why="the source was not placed before removing it"; return 1; }
+  rm -rf "$SRC"
+  run remove --source "$SRC"
+  [ "$rc" = 0 ] || { why="remove exited $rc: $(tail -1 "$T/out")"; return 1; }
+  python3 - "$HOME" "$SRC" <<'PY' || { why="$(cat "$T/remove.why")"; return 1; }
+import json, os, sys
+home, src = sys.argv[1:]
+def fail(reason):
+    open(os.environ["T"] + "/remove.why", "w").write(reason)
+    sys.exit(1)
+for folder in (".claude/skills", ".agents/skills", ".claude/rules"):
+    for name in os.listdir(os.path.join(home, folder)):
+        place = os.path.join(home, folder, name)
+        if os.path.islink(place) and os.readlink(place).startswith(src):
+            fail("%s still links into the removed source" % place)
+for path in (".codex/AGENTS.md", ".copilot/copilot-instructions.md"):
+    if "Rule three." in open(os.path.join(home, path)).read():
+        fail("the rule of the removed source is still in %s" % path)
+    if "Rule one." not in open(os.path.join(home, path)).read():
+        fail("the rule of ~/.shared is gone from %s" % path)
+for path in (".claude/settings.json", ".codex/hooks.json", ".copilot/hooks/agent-shared.json"):
+    text = open(os.path.join(home, path)).read()
+    if "check.sh" in text or "source-stop" in text:
+        fail("a hook of the removed source is still in %s" % path)
+    if "guard.sh" not in text:
+        fail("the hooks of ~/.shared are gone from %s" % path)
+if "echo mine" not in open(os.path.join(home, ".claude/settings.json")).read():
+    fail("the hand-written hook is gone")
+if not os.path.islink(os.path.join(home, ".claude/skills/alpha")):
+    fail("the skill of ~/.shared is gone")
+place = os.path.join(home, ".codex/hooks.json")
+data = json.load(open(place))
+marked = {"%s:%s:%d:%d" % (place, e, gi, hi) for e, groups in data["hooks"].items() for gi, g in enumerate(groups)
+          for hi, h in enumerate(g["hooks"]) if "\n" in h["command"] and h["command"].rsplit("\n", 1)[1].startswith("# agent-shared")}
+log = os.path.join(home, "codex-calls.jsonl")
+writes = [json.loads(l) for l in open(log) if '"config/batchWrite"' in l]
+trusted = {k for k, v in writes[-1]["params"]["edits"][0]["value"].items() if isinstance(v, dict) and v.get("trusted_hash")}
+if trusted != marked:
+    fail("Codex trusts %s after remove, while the hooks left are %s" % (sorted(trusted), sorted(marked)))
+PY
+}
+
+readmes_definition() {
+  local f word
+  for f in README.md README.ja.md; do
+    grep -qF '](spec/agent-shared' "$ROOT/$f" || { why="$f does not link the definition"; return 1; }
+    for word in 'agent-shared check' 'agent-shared approve' 'agent-shared remove'; do
+      grep -qF "$word" "$ROOT/$f" || { why="$f does not describe $word"; return 1; }
+    done
+  done
+}
+
+pyproject_url() {
+  grep -qF 'Repository = "https://github.com/cardene777/agent-shared"' "$PKG/pyproject.toml" \
+    || { why="pyproject.toml names another repository: $(grep -F 'Repository' "$PKG/pyproject.toml")"; return 1; }
+}
+
 # The icon keeps the dark rounded square of agent-shuriken's icon, so the two read as one family.
 icon_present() {
   local icon="$ROOT/assets/icon.svg"
@@ -1179,6 +1516,21 @@ check "placed lists the rules and hooks placed for Copilot CLI" copilot_placed
 check "deploy writes nothing for Copilot CLI without ~/.copilot" copilot_absent
 check "deploy leaves the other Copilot CLI hook files unchanged" copilot_other_hook_files
 check "the READMEs name where Copilot CLI's rules and hooks go" readmes_name_copilot
+check "the definition pair has the same headings, tables, and examples" definition_pair
+check "the definition has every section and a dated version" definition_sections
+check "every row of the agent table lists its events and checked versions" table_rows
+check "check passes the example source folder" check_example
+check "check refuses wrong declarations naming the file and the entry" check_refuses
+check "deploy places the example where the definition says" example_deploy
+check "a hook with an event an agent lacks is left out of that agent and named" missing_event
+check "a source not approved gets no hooks and is named" unapproved_source
+check "approve prints the commands and lets the next deploy write them" approve_then_deploy
+check "a source placed before and ~/.shared keep their hooks without approval" approved_before
+check "deploy writes a repository's rules in one block of its AGENTS.md" repo_rules
+check "deploy writes a repository's hooks into each agent's repository settings" repo_hooks
+check "remove takes out everything one source placed, also after its folder is gone" remove_all
+check "the READMEs link the definition and describe check, approve, and remove" readmes_definition
+check "pyproject names this repository" pyproject_url
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]
