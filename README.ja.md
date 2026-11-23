@@ -1,6 +1,6 @@
 # agent-shared
 
-[English](agent-shared.md) · 日本語
+[English](README.md) · 日本語
 
 `agent-shared`は、1つのフォルダーに置いたスキルとルールとhookを、PCの全てのコーディングエージェントへ配ります。
 スキルとルールはそのフォルダーの1つの実体を指すリンクなので、直すと全てのエージェントに一度に届きます。
@@ -9,10 +9,11 @@
 ## インストール
 
 コマンドには[uv](https://docs.astral.sh/uv/)が要り、macOSとLinuxで動きます。
-uvが入れるのはコマンドだけで、このリポジトリのプラグインは入りません。PCにPython 3.11以上が無い時はuvが用意します。
+PCにPython 3.11以上が無い時はuvが用意します。
+リポジトリは非公開なので、gitはGitHubのログインで読みます。
 
 ```
-uv tool install "git+https://github.com/cardene777/agent-shuriken#subdirectory=agent-shared"
+uv tool install "git+https://github.com/cardene777/agent-shared"
 uv tool upgrade agent-shared
 ```
 

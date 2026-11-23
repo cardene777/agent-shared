@@ -6,7 +6,7 @@ set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG="$(cd "$HERE/.." && pwd)"
-ROOT="$(cd "$PKG/.." && pwd)"
+ROOT="$PKG"
 REAL_HOME="$HOME"
 PASS=0
 FAIL=0
@@ -354,22 +354,6 @@ private_record() {
   export AGENT_SHARED_STATE="$T/state"
   deployed || return 1
   [ -n "$(find "$T/state" -type f -print -quit 2>/dev/null)" ] || { why="AGENT_SHARED_STATE did not move the record"; return 1; }
-}
-
-readmes_first() {
-  local f first
-  for f in README.md README.ja.md; do
-    first="$(grep -m1 '^## ' "$ROOT/$f")"
-    [ "$first" = "## agent-shared" ] || { why="the first section of $f is '$first'"; return 1; }
-  done
-}
-
-getting_started() {
-  local f
-  for f in docs/getting-started.md docs/getting-started.ja.md; do
-    ! grep -qF '~/.codex/skills' "$ROOT/$f" || { why="$f still names ~/.codex/skills"; return 1; }
-    grep -qF '~/.agents/skills' "$ROOT/$f" || { why="$f does not name ~/.agents/skills"; return 1; }
-  done
 }
 
 export T
@@ -968,8 +952,6 @@ check "two sources with the same skill name are refused" refuses_same_name
 check "a hand-written hook with a declared command is refused" refuses_hand_hook
 check "a row in the user's table adds an agent" user_row
 check "the record of placed items is kept readable only by the user" private_record
-check "the READMEs put agent-shared before the plugins" readmes_first
-check "getting started no longer points Codex at its deprecated skills folder" getting_started
 check "hooks prints the groups deploy adds for an agent" hooks_match_deploy
 check "hooks leaves out a hook whose tools name another agent" hooks_by_tools
 check "hooks includes the hooks of every source" hooks_every_source
