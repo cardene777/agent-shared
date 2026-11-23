@@ -1169,6 +1169,79 @@ PY
   done
 }
 
+# Placed while the command was there, then the command is gone: the hook file goes, and so does the folder it
+# leaves empty, while the agent's folder right under the home folder stays even when empty.
+emptied_hooks_folder() {
+  fresh emptied-hooks
+  mkdir -p "$HOME/.copilot"
+  copilot_installed
+  deployed || return 1
+  [ -f "$HOME/$COPILOT_HOOKS" ] || { why="the first run, with the copilot command, did not write the hook file"; return 1; }
+  export PATH="$BASE_PATH"
+  deployed || return 1
+  [ ! -e "$HOME/$COPILOT_HOOKS" ] || { why="the hook file was not removed"; return 1; }
+  [ ! -e "$HOME/.copilot/hooks" ] || { why="the emptied ~/.copilot/hooks stayed"; return 1; }
+  [ -d "$HOME/.copilot" ] || { why="~/.copilot, the agent's folder, was removed"; return 1; }
+}
+
+# The source drops its skills: the links go, and so do the skill folders they leave empty, while the agents'
+# folders right under the home folder stay.
+emptied_skill_folder() {
+  fresh emptied-skills
+  deployed || return 1
+  links_to "$HOME/.agents/skills/alpha" "$HOME/.shared/skills/alpha" || { why="the first run did not link the skills"; return 1; }
+  rm -rf "$HOME/.shared/skills"
+  deployed || return 1
+  local folder
+  for folder in .claude/skills .agents/skills; do
+    [ ! -e "$HOME/$folder" ] || { why="the emptied ~/$folder stayed: $(ls -A "$HOME/$folder" | tr '\n' ' ')"; return 1; }
+  done
+  [ -d "$HOME/.claude" ] && [ -d "$HOME/.agents" ] || { why="an agent's folder right under the home folder was removed"; return 1; }
+}
+
+# A repository's .shared placed skills, rules, and hooks into the repository, then is removed: no folder it left
+# empty stays, and the repository root does.
+remove_repo_folders() {
+  fresh remove-repo
+  mkdir -p "$HOME/.copilot"
+  copilot_installed
+  repo_with_shared remove
+  mkdir -p "$REPO/.shared/skills/gamma"
+  printf -- '---\nname: gamma\ndescription: Gamma.\n---\nGamma.\n' > "$REPO/.shared/skills/gamma/SKILL.md"
+  approve_source "$REPO/.shared"
+  run deploy --repo "$REPO"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  [ -f "$REPO/.github/hooks/agent-shared.json" ] && [ -L "$REPO/.claude/skills/gamma" ] \
+    || { why="the repository's hooks and skills were not placed before removing them"; return 1; }
+  run remove --source "$REPO/.shared"
+  [ "$rc" = 0 ] || { why="remove exited $rc: $(tail -1 "$T/out")"; return 1; }
+  [ -d "$REPO/.git" ] && [ -d "$REPO/.shared" ] || { why="the repository root lost .git or .shared"; return 1; }
+  local empty
+  empty="$(cd "$REPO" && find . -mindepth 1 -type d -empty -not -path './.git' -not -path './.git/*' -not -path './.shared' -not -path './.shared/*' | sort | tr '\n' ' ')"
+  [ -z "$empty" ] || { why="remove left empty folders in the repository: $empty"; return 1; }
+}
+
+# A folder that still holds the person's file stays when agent-shared takes its own file out of it.
+person_file_folder() {
+  fresh person-folder
+  mkdir -p "$HOME/.copilot/hooks"
+  printf '{"version": 1, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}\n' > "$HOME/.copilot/hooks/mine.json"
+  copilot_installed
+  deployed || return 1
+  export PATH="$BASE_PATH"
+  deployed || return 1
+  [ ! -e "$HOME/$COPILOT_HOOKS" ] || { why="the hook file was not removed"; return 1; }
+  [ -f "$HOME/.copilot/hooks/mine.json" ] || { why="~/.copilot/hooks/mine.json, the person's file, is gone"; return 1; }
+}
+
+definition_emptied_folders() {
+  local f word
+  for f in spec/agent-shared.md README.md spec/agent-shared.ja.md README.ja.md; do
+    case "$f" in *.ja.md) word='空になったフォルダー' ;; *) word='left empty' ;; esac
+    grep -qF "$word" "$ROOT/$f" || { why="$f does not say a folder left empty is removed ($word)"; return 1; }
+  done
+}
+
 readmes_name_copilot() {
   local f
   for f in README.md README.ja.md; do
@@ -1609,6 +1682,11 @@ check "pyproject names this repository" pyproject_url
 check "deploy writes nothing for Copilot CLI with only an IDE plugin's folder" copilot_ide_only
 check "a skipped Copilot CLI row loses what was placed and keeps the person's own" copilot_skipped_cleanup
 check "the definition and the READMEs name needs_command for Copilot CLI" definition_names_needs_command
+check "a removed hook file takes its emptied folder with it" emptied_hooks_folder
+check "taking out the last skill link removes its emptied folder" emptied_skill_folder
+check "remove leaves no empty folder in the repository" remove_repo_folders
+check "a folder holding the person's file stays" person_file_folder
+check "the definition and the READMEs say emptied folders are removed" definition_emptied_folders
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]

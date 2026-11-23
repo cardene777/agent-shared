@@ -134,6 +134,7 @@ Placed rules sit between two fence lines in the agent's rules file.
 
 `<id>` is the first 12 hexadecimal digits of the SHA-256 of the source folder's real path.
 A tool takes out or rewrites only entries that carry the mark of a source folder it deploys, and leaves every other entry as it is.
+When taking an item out leaves its folder empty, the tool removes that folder and each folder above it left empty, and stops at a folder right under the home folder (an agent's own folder such as `~/.copilot`) and at the repository root, which stay even when empty.
 The record of links and the list of items switched off for one agent are each tool's own and are not part of this definition; agent-shared keeps them in `placed.json` and `off.json`.
 
 ## Approving sources

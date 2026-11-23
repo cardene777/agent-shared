@@ -3,6 +3,10 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
+## Unreleased
+
+- When `deploy` or `remove` takes a file or a link out, the folders it leaves empty go too, up to an agent's folder right under the home folder, such as `~/.copilot`, and the repository root, which stay
+
 ## [0.2.1] - 2026-11-23
 
 - The GitHub Copilot CLI row waits for the `copilot` command on `PATH` (`needs_command`) instead of the folder `~/.copilot`, which a Copilot IDE plugin also makes, so a computer without Copilot CLI gets nothing

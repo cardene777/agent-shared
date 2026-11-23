@@ -96,6 +96,7 @@ Until then, `agent-shared deploy` places the source's skills and rules, places n
 
 `agent-shared remove --source <folder>` takes out everything one source placed in every agent: its links, its rules blocks, its marked hooks, and Codex's trust for those hooks.
 It reads only the marks and the record, so it works after you delete the folder, and it leaves entries you wrote by hand unchanged.
+When `deploy` or `remove` takes an item out, a folder left empty goes too, up to the agent's folder right under your home folder, such as `~/.copilot`, and the repository root, which stay even when empty.
 
 ## Checking a source folder
 

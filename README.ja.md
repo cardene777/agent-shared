@@ -97,6 +97,8 @@ agent-shared approve --source ~/apps/my-tool/.shared
 `agent-shared remove --source <folder>`は、1つの配る元が全エージェントに置いた物を全部外します。
 外すのは、リンク、ルールの囲み、印の付いたhook、それらのhookへのCodexの信頼の印です。
 印と記録だけを読むので、フォルダーを消した後でも外せ、手で書いた物には触れません。
+`deploy`か`remove`が物を外して空になったフォルダーも消します。
+家のフォルダーの直下のエージェントのフォルダー (`~/.copilot`など) とリポジトリの根は、空でも残します。
 
 ## 配る元を確かめる
 

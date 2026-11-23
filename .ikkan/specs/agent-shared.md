@@ -1,6 +1,6 @@
 # agent-shared
 
-| 条件 | 確かめ方 | 出元 |
+| Criterion | How to check | Origin |
 |---|---|---|
 | `agent-shared/`のfolderを一時のtoolの置き場へ`uv tool install`で入れた時、`agent-shared`のコマンドが入り、入った物は`plugins/`の下のfileを1つも含まない | `bash tests/test-agent-shared.sh`の検査`"uv tool install puts agent-shared on PATH without any plugin"`が通る | #250 |
 | 一時の`HOME`で`agent-shared deploy`を打った時、`~/.shared/skills/`の各skillが`~/.claude/skills/<名前>`と`~/.agents/skills/<名前>`のlinkになり、どちらのlinkも`~/.shared/skills/<名前>`を指す | `bash tests/test-agent-shared.sh`の検査`"deploy links every skill into the Claude Code and shared agent folders"`が通る | #250 |
@@ -52,3 +52,8 @@
 | READMEと`--help`が、`off.json`の置き場と形と、読めない時の扱いと、`off`と`on`の打ち方を書く | `bash tests/test-agent-shared.sh`の検査`"the README and the help describe off.json"`が通る | #331 |
 | `off.json`が無い時、`agent-shared deploy`はruleを今と同じに置く | `bash tests/test-agent-shared.sh`の検査`"deploy writes rules as links for Claude Code and one block for Codex"`が通る | #331 |
 | `off.json`が無い時、`agent-shared deploy`はhookを今と同じに置き、ほかの設定を残す | `bash tests/test-agent-shared.sh`の検査`"deploy adds marked hooks and keeps the other settings"`が通る | #331 |
+| When the `copilot` command is gone and the next deploy removes `~/.copilot/hooks/agent-shared.json`, the emptied `~/.copilot/hooks` is removed and `~/.copilot` stays | `bash tests/test-agent-shared.sh` check `"a removed hook file takes its emptied folder with it"` passes | #17 |
+| When a deploy takes out the last skill link of a folder under an agent's folder, the emptied folder is removed and the agent's folder right under the home folder stays | `bash tests/test-agent-shared.sh` check `"taking out the last skill link removes its emptied folder"` passes | #17 |
+| After `agent-shared remove --source <repository>/.shared`, no folder agent-shared left empty remains in the repository, and the repository root stays | `bash tests/test-agent-shared.sh` check `"remove leaves no empty folder in the repository"` passes | #17 |
+| A folder that still holds a file of the person's, such as `~/.copilot/hooks/mine.json`, stays when agent-shared takes its own file out of it | `bash tests/test-agent-shared.sh` check `"a folder holding the person's file stays"` passes | #17 |
+| The definition and both READMEs say a folder left empty is removed, up to the agent's folder under the home folder and the repository root | `bash tests/test-agent-shared.sh` check `"the definition and the READMEs say emptied folders are removed"` passes | #17 |
