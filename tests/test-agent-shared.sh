@@ -300,11 +300,17 @@ skips_plugin_skills() {
   printf -- '---\nname: alpha\ndescription: Alpha from a plugin.\n---\n' > "$cache/skills/alpha/SKILL.md"
   printf '{"version": 2, "plugins": {"kit@market": [{"scope": "user", "installPath": "%s", "version": "1.0.0"}]}}\n' "$cache" \
     > "$HOME/.claude/plugins/installed_plugins.json"
+  # A Codex plugin has beta. Copilot CLI reads ~/.agents/skills too, so its folder is there to show that
+  # its row does not bring beta back into that folder.
+  mkdir -p "$HOME/.codex/plugins/cache/market/tool/1.0.0/skills/beta" "$HOME/.copilot"
+  printf -- '---\nname: beta\ndescription: Beta from a Codex plugin.\n---\n' > "$HOME/.codex/plugins/cache/market/tool/1.0.0/skills/beta/SKILL.md"
+  printf '[plugins."tool@market"]\nenabled = true\n' > "$HOME/.codex/config.toml"
   deployed || return 1
   [ ! -e "$HOME/.claude/skills/alpha" ] && [ ! -L "$HOME/.claude/skills/alpha" ] || { why="alpha was placed for Claude Code although the plugin has it"; return 1; }
   [ -L "$HOME/.claude/skills/beta" ] || { why="beta was not placed for Claude Code"; return 1; }
   [ -L "$HOME/.agents/skills/alpha" ] || { why="alpha was not placed for the agents without the plugin"; return 1; }
   grep 'alpha' "$T/out" | grep -q 'kit@market' || { why="the run did not name the skill and the plugin"; return 1; }
+  [ ! -e "$HOME/.agents/skills/beta" ] && [ ! -L "$HOME/.agents/skills/beta" ] || { why="beta was placed in ~/.agents/skills although the Codex plugin has it"; return 1; }
 }
 
 refuses_same_name() {
@@ -937,6 +943,157 @@ off_documented() {
   grep -q 'exit status' "$T/help.out" && grep -qF 'off.json' "$T/help.out" || { why="off --help does not describe off.json and its exits"; return 1; }
 }
 
+# GitHub Copilot CLI reads rules from ~/.copilot/copilot-instructions.md in every session and hooks from
+# ~/.copilot/hooks/*.json, which take Claude Code's nested shape with PascalCase events and a top-level
+# "version": 1. Copilot CLI is not run here; the files written are checked against that shape.
+COPILOT_RULES=".copilot/copilot-instructions.md"
+COPILOT_HOOKS=".copilot/hooks/agent-shared.json"
+
+# Checks a Copilot CLI hook file at $1 with the Python on stdin, which has `data`, `home`, and
+# marked(command), and calls fail(<reason>) when it does not hold.
+copilot_holds() {
+  python3 - "$1" "$HOME" "$T/copilot.why" 3<&0 <<'PY' || { why="$(cat "$T/copilot.why" 2>/dev/null)"; return 1; }
+import json, os, sys
+path, home, why = sys.argv[1:]
+def fail(reason):
+    open(why, "w").write(reason)
+    sys.exit(1)
+def marked(command):
+    return "\n" in command and command.rsplit("\n", 1)[1].startswith("# agent-shared")
+if not os.path.exists(path):
+    fail("%s was not written" % path)
+data = json.load(open(path))
+exec(os.fdopen(3).read())
+PY
+}
+
+copilot_rules() {
+  fresh copilot-rules
+  mkdir -p "$HOME/.copilot"
+  printf '# My Copilot notes\n\nKeep this line.\n' > "$HOME/$COPILOT_RULES"
+  cp "$HOME/$COPILOT_RULES" "$T/copilot-before.md"
+  deployed || return 1
+  python3 - "$T/copilot-before.md" "$HOME/$COPILOT_RULES" <<'PY' || { why="$(cat "$T/copilot-rules.why" 2>/dev/null)"; return 1; }
+import os, sys
+before = open(sys.argv[1]).read()
+after = open(sys.argv[2]).read()
+lines = after.splitlines(keepends=True)
+begins = [i for i, line in enumerate(lines) if line.startswith("<!-- agent-shared begin")]
+ends = [i for i, line in enumerate(lines) if line.startswith("<!-- agent-shared end")]
+problem = None
+if len(begins) != 1 or len(ends) != 1 or begins[0] > ends[0]:
+    problem = "copilot-instructions.md does not have exactly one block"
+elif "".join(lines[:begins[0]]) + "".join(lines[ends[0] + 1:]) != before:
+    problem = "the lines outside the block changed"
+elif "Rule one." not in after or "Rule two." not in after:
+    problem = "the block does not hold both rules"
+if problem:
+    open(os.environ["T"] + "/copilot-rules.why", "w").write(problem)
+    sys.exit(1)
+PY
+}
+
+copilot_hooks() {
+  fresh copilot-hooks
+  mkdir -p "$HOME/.copilot"
+  deployed || return 1
+  copilot_holds "$HOME/$COPILOT_HOOKS" <<'PY'
+if data.get("version") != 1:
+    fail("the hook file has version %r, not 1" % data.get("version"))
+events = data.get("hooks")
+if not isinstance(events, dict) or sorted(events) != ["PreToolUse", "Stop"]:
+    fail("the events are %r, not PreToolUse and Stop" % (sorted(events) if isinstance(events, dict) else events))
+guard = "bash %s/.shared/hooks/guard.sh" % home
+matchers = []
+for group in events["PreToolUse"]:
+    inner = group.get("hooks")
+    if not isinstance(inner, list) or not all(isinstance(h, dict) and h.get("type") == "command" for h in inner):
+        fail("a PreToolUse group has no nested list of command hooks: %r" % group)
+    matchers += [group.get("matcher") for h in inner if marked(h["command"]) and h["command"].startswith(guard)]
+if sorted(matchers) != ["Bash", "Edit"]:
+    fail("the marked guard hook is under the matchers %r, not Bash and Edit once each" % matchers)
+if not any(marked(h["command"]) and h["command"].startswith("echo stop") for g in events["Stop"] for h in g.get("hooks", [])):
+    fail("the hook file has no marked stop hook")
+PY
+}
+
+copilot_removes() {
+  fresh copilot-remove
+  mkdir -p "$HOME/.copilot"
+  deployed || return 1
+  grep -q 'Rule two.' "$HOME/$COPILOT_RULES" 2>/dev/null && grep -q 'echo stop' "$HOME/$COPILOT_HOOKS" 2>/dev/null \
+    || { why="the first run placed no rule two or stop hook for Copilot CLI"; return 1; }
+  python3 - "$HOME/$COPILOT_HOOKS" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+data["hooks"].setdefault("Stop", []).append({"hooks": [{"type": "command", "command": "echo my-copilot-hook"}]})
+json.dump(data, open(sys.argv[1], "w"), indent=2)
+PY
+  rm -f "$HOME/.shared/rules/two.md"
+  cat > "$HOME/.shared/hooks.json" <<'JSON'
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh"}]}]}}
+JSON
+  deployed || return 1
+  ! grep -q 'Rule two.' "$HOME/$COPILOT_RULES" || { why="rule two is still in copilot-instructions.md"; return 1; }
+  grep -q 'Rule one.' "$HOME/$COPILOT_RULES" || { why="rule one, still in the source, was taken out"; return 1; }
+  copilot_holds "$HOME/$COPILOT_HOOKS" <<'PY'
+commands = [h["command"] for groups in data.get("hooks", {}).values() for g in groups for h in g.get("hooks", [])]
+if any(marked(c) and c.startswith("echo stop") for c in commands):
+    fail("the stop hook taken out of the source is still in the hook file")
+if not any(marked(c) and "guard.sh" in c for c in commands):
+    fail("the guard hook, still in the source, was taken out")
+if "echo my-copilot-hook" not in commands:
+    fail("the hook without the mark is gone")
+PY
+}
+
+copilot_placed() {
+  fresh copilot-placed
+  mkdir -p "$HOME/.copilot"
+  full_source copilot
+  run deploy --source "$SRC"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  placed_ok --source "$SRC" || return 1
+  placed_holds <<'PY'
+agent = (out.get("agents") or {}).get("GitHub Copilot CLI")
+if not isinstance(agent, dict):
+    fail("GitHub Copilot CLI is missing from agents")
+if agent.get("rules") != ["three.md"]:
+    fail("GitHub Copilot CLI rules are %r" % agent.get("rules"))
+if len(agent.get("hooks") or []) != 3:
+    fail("GitHub Copilot CLI has %d hooks, not the 3 the source declared for it" % len(agent.get("hooks") or []))
+PY
+}
+
+copilot_absent() {
+  fresh copilot-absent
+  hooks_run --agent "GitHub Copilot CLI"
+  [ "$rc" = 0 ] || { why="the default table has no GitHub Copilot CLI row: $(tail -1 "$T/hooks.err")"; return 1; }
+  deployed || return 1
+  [ ! -e "$HOME/.copilot" ] || { why="deploy created ~/.copilot: $(find "$HOME/.copilot" | head -3 | tr '\n' ' ')"; return 1; }
+  links_to "$HOME/.claude/rules/one.md" "$HOME/.shared/rules/one.md" || { why="the rules were not written for Claude Code"; return 1; }
+  grep -q 'Rule one.' "$HOME/.codex/AGENTS.md" || { why="the rules were not written for Codex"; return 1; }
+  grep -q 'guard.sh' "$HOME/.claude/settings.json" && grep -q 'guard.sh' "$HOME/.codex/hooks.json" \
+    || { why="the hooks were not written for Claude Code and Codex"; return 1; }
+}
+
+copilot_other_hook_files() {
+  fresh copilot-others
+  mkdir -p "$HOME/.copilot/hooks"
+  printf '{"version": 1, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}\n' > "$HOME/.copilot/hooks/mine.json"
+  cp "$HOME/.copilot/hooks/mine.json" "$T/copilot-mine-before.json"
+  deployed || return 1
+  cmp -s "$HOME/.copilot/hooks/mine.json" "$T/copilot-mine-before.json" || { why="~/.copilot/hooks/mine.json changed"; return 1; }
+}
+
+readmes_name_copilot() {
+  local f
+  for f in README.md README.ja.md; do
+    grep -qF '~/.copilot/copilot-instructions.md' "$ROOT/$f" && grep -qF '~/.copilot/hooks/agent-shared.json' "$ROOT/$f" \
+      || { why="$f does not name where Copilot CLI's rules and hooks go"; return 1; }
+  done
+}
+
 # The icon keeps the dark rounded square of agent-shuriken's icon, so the two read as one family.
 icon_present() {
   local icon="$ROOT/assets/icon.svg"
@@ -1014,6 +1171,13 @@ check "the icon is a square SVG in assets" icon_present
 check "both READMEs show the icon at the top" readmes_show_icon
 check "the READMEs name no sign-in or private repository" readmes_name_no_sign_in
 check "the READMEs install from this repository" readmes_install_here
+check "deploy writes rules in one block of Copilot CLI's instructions" copilot_rules
+check "deploy writes marked hooks for Copilot CLI in a file of version 1" copilot_hooks
+check "a removed rule or hook is taken out of Copilot CLI on the next run" copilot_removes
+check "placed lists the rules and hooks placed for Copilot CLI" copilot_placed
+check "deploy writes nothing for Copilot CLI without ~/.copilot" copilot_absent
+check "deploy leaves the other Copilot CLI hook files unchanged" copilot_other_hook_files
+check "the READMEs name where Copilot CLI's rules and hooks go" readmes_name_copilot
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]
