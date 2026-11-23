@@ -655,7 +655,8 @@ placed_never_deployed() {
   placed_ok --source "$SRC" || return 1
   placed_holds <<'PY' || return 1
 empty = {"skills": [], "rules": [], "hooks": []}
-if out != {"source": src, "agents": {"Claude Code": empty, "Codex": empty}} or list(out["agents"]) != ["Claude Code", "Codex"]:
+default = ["Claude Code", "Codex", "GitHub Copilot CLI"]
+if out != {"source": src, "agents": {name: empty for name in default}} or list(out["agents"]) != default:
     fail("before any deploy placed printed %r" % out)
 PY
   printf '{"version": 1, "agents": [{"name": "tester", "skills": "~/.tester/skills"}]}\n' > "$HOME/.shared/agents.json"
@@ -663,7 +664,7 @@ PY
   placed_ok --source "$SRC" || return 1
   placed_holds <<'PY'
 agents = out.get("agents") or {}
-if list(agents) != ["Claude Code", "Codex", "tester"]:
+if list(agents) != ["Claude Code", "Codex", "GitHub Copilot CLI", "tester"]:
     fail("the agents are %r, not every agent of the table in its order" % list(agents))
 for name, agent in agents.items():
     if agent != {"skills": [], "rules": [], "hooks": []}:

@@ -3,6 +3,11 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
+## Unreleased
+
+- The default agent table gives GitHub Copilot CLI the rules in one block of `~/.copilot/copilot-instructions.md` and the hooks in `~/.copilot/hooks/agent-shared.json`, only when `~/.copilot` exists
+- A row of the agent table can leave out `skills`, wait for a folder with `needs`, and put a `version` on top of its hook file
+
 ## [0.1.0] - 2026-11-23
 
 - `agent-shared deploy`, which links the skills and rules in `~/.shared` into Claude Code and the agents that read `~/.agents/skills`, writes the rules into `~/.codex/AGENTS.md` and the hooks into both agents' settings with Codex's trust, links a repository's `.shared` skills into its own folders, and removes only what it placed

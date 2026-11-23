@@ -16,6 +16,12 @@
       "rules": {"place": "~/.codex/AGENTS.md", "form": "block"},
       "hooks": {"file": "~/.codex/hooks.json", "trust": "codex-app-server"},
       "plugins": "codex"
+    },
+    {
+      "name": "GitHub Copilot CLI",
+      "needs": "~/.copilot",
+      "rules": {"place": "~/.copilot/copilot-instructions.md", "form": "block"},
+      "hooks": {"file": "~/.copilot/hooks/agent-shared.json", "version": 1}
     }
   ]
 }
