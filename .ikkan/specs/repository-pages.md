@@ -1,6 +1,6 @@
 # repository-pages
 
-| 条件 | 確かめ方 | 出元 |
+| Criterion | How to check | Origin |
 |---|---|---|
 | `assets/icon.svg` is a square SVG on the dark rounded square of agent-shuriken's icon, holding an agent's face and a folder | `bash tests/test-agent-shared.sh` check `"the icon is a square SVG in assets"` passes | #5 |
 | `README.md` and `README.ja.md` show `assets/icon.svg` before their first section | `bash tests/test-agent-shared.sh` check `"both READMEs show the icon at the top"` passes | #5 |

@@ -1,6 +1,6 @@
 # agent-shared
 
-| 条件 | 確かめ方 | 出元 |
+| Criterion | How to check | Origin |
 |---|---|---|
 | `agent-shared/`のfolderを一時のtoolの置き場へ`uv tool install`で入れた時、`agent-shared`のコマンドが入り、入った物は`plugins/`の下のfileを1つも含まない | `bash tests/test-agent-shared.sh`の検査`"uv tool install puts agent-shared on PATH without any plugin"`が通る | #250 |
 | 一時の`HOME`で`agent-shared deploy`を打った時、`~/.shared/skills/`の各skillが`~/.claude/skills/<名前>`と`~/.agents/skills/<名前>`のlinkになり、どちらのlinkも`~/.shared/skills/<名前>`を指す | `bash tests/test-agent-shared.sh`の検査`"deploy links every skill into the Claude Code and shared agent folders"`が通る | #250 |
