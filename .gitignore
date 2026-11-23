@@ -1,0 +1,7 @@
+.context/
+.DS_Store
+__pycache__/
+*.pyc
+# Building agent-shared with uv tool install leaves these next to the source.
+build/
+*.egg-info/
