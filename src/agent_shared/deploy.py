@@ -1011,6 +1011,7 @@ def deploy(extra_sources, repo_argument):
         if still_placed(place, target):
             os.unlink(place)
             notes.append("removed {}".format(shown(place)))
+            clear_emptied(place, notes, repo_root)
     for place, (target, source) in sorted(wanted.items()):
         placed_links[source.id][place] = target
         if still_placed(place, target):
@@ -1019,9 +1020,9 @@ def deploy(extra_sources, repo_argument):
         os.symlink(target, place)
         notes.append("placed {}".format(shown(place)))
     for place, text in sorted(blocks_text.items()):
-        put_text(place, text, "wrote the rules block in {}", notes)
+        put_text(place, text, "wrote the rules block in {}", notes, repo_root)
     for place, text in sorted(hooks_text.items()):
-        put_text(place, text, "wrote the hooks in {}", notes)
+        put_text(place, text, "wrote the hooks in {}", notes, repo_root)
     record.save(run, placed_links)
 
     for place, entry in sorted(hook_files.items()):
@@ -1057,15 +1058,36 @@ def holds_nothing(text):
     return isinstance(data, dict) and set(data) <= {"version"}
 
 
-def put_text(place, text, done, notes):
+def put_text(place, text, done, notes, repo_root=None):
     """Writes a rules or hook file, or removes it when it would hold nothing, so no empty file is left behind."""
     if holds_nothing(text):
         if os.path.exists(place):
             os.unlink(place)
             notes.append("removed {}, which held nothing else".format(shown(place)))
+            clear_emptied(place, notes, repo_root)
         return
     write_text(place, text)
     notes.append(done.format(shown(place)))
+
+
+def clear_emptied(place, notes, repo_root=None):
+    """Removes, upward, the folders that taking `place` out left empty. It stops at a folder right under the home
+    folder, which is an agent's own folder such as `~/.copilot`, and at the repository root; both stay even when
+    empty. A folder outside the home folder and the repository is never removed."""
+    top = home()
+    folder = os.path.dirname(place)
+    while True:
+        parent = os.path.dirname(folder)
+        in_repo = repo_root is not None and folder.startswith(repo_root + os.sep)
+        in_home = folder.startswith(top + os.sep) and parent != top
+        if folder == repo_root or not (in_repo or in_home):
+            return
+        try:
+            os.rmdir(folder)
+        except OSError:
+            return
+        notes.append("removed {}, which was left empty".format(shown(folder)))
+        folder = parent
 
 
 def write_codex_trust(place, notes, warnings):
@@ -1162,10 +1184,11 @@ def remove(source_path):
     for place in links:
         os.unlink(place)
         notes.append("removed {}".format(shown(place)))
+        clear_emptied(place, notes, repo_root)
     for place, text in sorted(blocks_text.items()):
-        put_text(place, text, "took the rules block out of {}", notes)
+        put_text(place, text, "took the rules block out of {}", notes, repo_root)
     for place, text in sorted(hooks_text.items()):
-        put_text(place, text, "took the hooks out of {}", notes)
+        put_text(place, text, "took the hooks out of {}", notes, repo_root)
     found = bool(links or blocks_text or hooks_text) or any(sid in record.sources for sid in ids)
     record.forget(ids)
     off.forget(ids)
