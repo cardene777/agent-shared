@@ -1328,6 +1328,47 @@ definition_versions() {
   done
 }
 
+# The two proposals to Agent Plugins, in English, with the parts its contributing guide asks a Discussion to cover.
+PROPOSALS="docs/proposals/agent-plugins-portable-rules.md docs/proposals/agent-plugins-hook-events.md"
+proposals_parts() {
+  local f heading
+  for f in $PROPOSALS; do
+    [ -f "$ROOT/$f" ] || { why="$f is missing"; return 1; }
+    for heading in '## Problem' '## Who hits it' '## Why it belongs in the portable specification' '## Who would adopt it'; do
+      grep -qxF "$heading" "$ROOT/$f" || { why="$f has no heading: $heading"; return 1; }
+    done
+    ! python3 -c 'import re,sys; sys.exit(0 if re.search(r"[぀-ヿ一-鿿]", open(sys.argv[1], encoding="utf-8").read()) else 1)' "$ROOT/$f" \
+      || { why="$f is not all English"; return 1; }
+  done
+}
+
+proposals_evidence() {
+  local f
+  for f in $PROPOSALS; do
+    [ -f "$ROOT/$f" ] || { why="$f is missing"; return 1; }
+    python3 - "$PKG/src/agent_shared/agents.json" "$ROOT/$f" <<'PY' || { why="$(cat "$T/proposal.why")"; return 1; }
+import json, os, sys
+rows = json.load(open(sys.argv[1]))["agents"]
+text = open(sys.argv[2], encoding="utf-8").read()
+missing = [r["name"] + " " + r["checked"]["to"] for r in rows if r["name"] not in text or r["checked"]["to"] not in text]
+if "https://github.com/cardene777/agent-shared/blob/main/spec/agent-shared.md" not in text:
+    missing.append("a link to the definition")
+if missing:
+    open(os.environ["T"] + "/proposal.why", "w").write("%s does not name %s" % (sys.argv[2], ", ".join(missing)))
+    sys.exit(1)
+PY
+  done
+}
+
+definition_v11() {
+  local f
+  for f in spec/agent-shared.md spec/agent-shared.ja.md; do
+    grep -qF 'Agent Plugins v1.1' "$ROOT/$f" && grep -qF 'docs/proposals/agent-plugins-portable-rules.md' "$ROOT/$f" \
+      && grep -qF 'docs/proposals/agent-plugins-hook-events.md' "$ROOT/$f" \
+      || { why="$f does not relate itself to Agent Plugins v1.1 and name the two proposals"; return 1; }
+  done
+}
+
 readmes_name_copilot() {
   local f
   for f in README.md README.ja.md; do
@@ -1778,6 +1819,9 @@ check "deploy writes an agent newer than its checked versions and names it" vers
 check "deploy writes an agent whose version cannot be read and says so" version_unreadable
 check "deploy writes an agent inside its checked versions without a version line" version_inside
 check "the definition and the READMEs say which versions stop the writes" definition_versions
+check "the two Agent Plugins proposals have the parts the contributing guide asks for" proposals_parts
+check "each proposal names the clients it ran on and links the definition" proposals_evidence
+check "the definition relates itself to Agent Plugins v1.1" definition_v11
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]
