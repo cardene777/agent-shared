@@ -128,7 +128,7 @@ agent-shared approve --source ~/apps/my-tool/.shared
 | `hooks` | `file`にhookを書く。`version`は、hookを持つファイルの頭に書く。`trust: codex-app-server`を書くと、Codexの信頼の印も書く |
 | `repo_hooks` | `hooks`と同じ。`file`はリポジトリの根からのpath |
 | `events` | エージェントが読むhookのイベント。無い行は全部のイベントを読む |
-| `checked` | `command`は入っている版を出す命令、`from`と`to`はその行を確かめた版 |
+| `checked` | `command`は入っている版を出す命令、`from`と`to`はその行を確かめた版、`deploy`は`from`より古い版のエージェントには何も書かずに前の物を残し、`to`より新しい版と版を読めないエージェントには書いてそのことを知らせる |
 | `plugins` | `claude`か`codex`。そのエージェントに入れたプラグインが既に持つスキルは、そのエージェントへ配らない |
 
 ## 配る元を増やす

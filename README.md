@@ -126,7 +126,7 @@ A hook whose event a row does not list is not written for that agent, and the ru
 | `hooks` | `file` gets the hooks. `version` is written on top of a file that holds hooks. `trust: codex-app-server` also writes Codex's trust for them |
 | `repo_hooks` | The same as `hooks`, with `file` relative to the repository root |
 | `events` | The hook events the agent reads. A row without it reads every event |
-| `checked` | `command` prints the installed version, and `from` and `to` are the versions the row was checked against |
+| `checked` | `command` prints the installed version, and `from` and `to` are the versions the row was checked against; `deploy` writes nothing for an agent older than `from` and leaves what it placed before, and writes an agent newer than `to` or whose version cannot be read, saying so |
 | `plugins` | `claude` or `codex`: skills that a plugin installed in that agent already has are not placed for it |
 
 ## More than one source

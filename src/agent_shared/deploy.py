@@ -25,6 +25,7 @@ import json
 import os
 import queue
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -682,6 +683,45 @@ def row_present(row):
     return "needs" not in row or os.path.exists(expand(row["needs"]))
 
 
+def version_key(text):
+    return tuple(int(part) for part in text.split("."))
+
+
+def agent_version(row):
+    """The version the `checked` command of a row prints, as text, or None when the command is missing, fails, or
+    prints no version."""
+    try:
+        done = subprocess.run(shlex.split(row["checked"]["command"]), capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, timeout=10)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"\d+(?:\.\d+)+", done.stdout) if done.returncode == 0 else None
+    return found.group(0) if found else None
+
+
+def version_check(row):
+    """Compares the installed version of a row's agent with its `checked` range. Returns (hold, line): hold is True
+    for a version older than `from`, which gets nothing written; line is the line the run prints, or None for a
+    version inside the range and for a row without `checked`."""
+    checked = row.get("checked")
+    if not checked:
+        return False, None
+    version = agent_version(row)
+    if version is None:
+        return False, "could not read the version of {} from `{}`; wrote it as before".format(
+            row["name"], checked["command"])
+    width = max(len(version_key(text)) for text in (version, checked["from"], checked["to"]))
+    key, low, high = (version_key(text) + (0,) * (width - len(version_key(text)))
+                      for text in (version, checked["from"], checked["to"]))
+    if key < low:
+        return True, ("wrote nothing for {}: its version {} is older than {}, the lowest version agent-shared "
+                      "checked; update {} and deploy again".format(row["name"], version, checked["from"], row["name"]))
+    if key > high:
+        return False, "{} {} is newer than {}, the highest version agent-shared checked; wrote it as before".format(
+            row["name"], version, checked["to"])
+    return False, None
+
+
 def agent_places(row):
     """Where one agent of the table keeps what agent-shared places in the home folder: the skills folder
     (None for an agent that reads another row's folder), the rules place and form (None without rules),
@@ -886,9 +926,24 @@ def deploy(extra_sources, repo_argument):
     written_agents = []
     trust_by_hand = set()
     skipped = []
+    # Folders whose links belong to an agent older than its checked versions: the run writes nothing for that agent,
+    # so its links stay where they are and stay in the record.
+    held_folders = set()
     for row in table:
         if not row_present(row):
             skipped.append(row)
+            continue
+        hold, line = version_check(row)
+        if line:
+            (warnings if hold else notes).append(line)
+        if hold:
+            skills_dir, rules_at, _hook_file = agent_places(row)
+            held_folders |= {skills_dir} if skills_dir else set()
+            held_folders |= {rules_at[0]} if rules_at and rules_at[1] == "link" else set()
+            if repo and isinstance(row.get("repo_skills"), str):
+                held_folders.add(os.path.join(repo_root, row["repo_skills"]))
+            if repo and (row.get("repo_rules") or {}).get("form") == "link":
+                held_folders.add(os.path.join(repo_root, row["repo_rules"]["place"]))
             continue
         written_agents.append(row["name"])
         kind = row.get("plugins")
@@ -1007,6 +1062,9 @@ def deploy(extra_sources, repo_argument):
     placed_links = {source.id: {} for source in run}
     for place, target in sorted(record.links(run_ids).items()):
         if place in wanted and wanted[place][0] == target:
+            continue
+        if place not in wanted and os.path.dirname(place) in held_folders:
+            placed_links[record.owner(place)[0]][place] = target
             continue
         if still_placed(place, target):
             os.unlink(place)
