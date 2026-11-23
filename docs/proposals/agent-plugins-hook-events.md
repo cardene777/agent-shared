@@ -1,7 +1,9 @@
 # Proposal: the hook events each client version supports, and reporting a hook a client does not run
 
-This is the text of a GitHub Discussion proposed to the Agent Plugins specification (agentplugins/agent-plugins-spec).
+This is the text of a GitHub Discussion posted to the Agent Plugins specification as agentplugins/agent-plugins-spec#101.
 A companion proposal covers rules as a plugin component: [agent-plugins-portable-rules.md](agent-plugins-portable-rules.md).
+
+Discussion-first proposal per CONTRIBUTING.md. Related threads: agentplugins/agent-plugins-spec#54 proposed the portable hooks component, and agentplugins/agent-plugins-spec#89 brought portable lifecycle hooks into v1.1; this proposal adds what happens to a handler a client does not run.
 
 ## Summary
 
@@ -59,3 +61,5 @@ When the installed client is older than the lowest version checked, nothing is w
 
 - Where the table lives: in the specification, in its conformance materials, or in a separate document the implementers update.
 - Whether a plugin can declare the events it needs, so a client refuses before installing rather than after.
+
+This proposal was prepared with an AI coding agent and reviewed by me.
