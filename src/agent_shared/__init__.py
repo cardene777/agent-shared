@@ -1,3 +1,3 @@
 """Deploy one folder of skills, rules, and hooks to several coding agents."""
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"

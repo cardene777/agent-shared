@@ -3,7 +3,7 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
-## Unreleased
+## [0.2.3] - 2026-11-23
 
 - `deploy` reads each agent's version with the `checked` command of its row: an agent older than `from` gets nothing written and keeps what was placed before, and an agent newer than `to` or whose version cannot be read is written as before; the run names each of them
 - The definition says the same rule; before, it said an agent outside the range on either side gets nothing written
