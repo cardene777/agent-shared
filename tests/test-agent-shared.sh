@@ -1360,6 +1360,22 @@ PY
   done
 }
 
+# Each proposal names the Discussion it was posted as, its related threads, and that an AI tool was used,
+# and the two name different Discussions (#27).
+proposals_posted() {
+  local f number numbers=""
+  for f in $PROPOSALS; do
+    [ -f "$ROOT/$f" ] || { why="$f is missing"; return 1; }
+    number="$(sed -n 's/^This is the text of a GitHub Discussion posted to the Agent Plugins specification as agentplugins\/agent-plugins-spec#\([0-9][0-9]*\)\.$/\1/p' "$ROOT/$f")"
+    [ -n "$number" ] || { why="$f does not name the Discussion it was posted as"; return 1; }
+    grep -q '^Discussion-first proposal per CONTRIBUTING.md. Related threads: ' "$ROOT/$f" || { why="$f names no related threads"; return 1; }
+    grep -qxF 'This proposal was prepared with an AI coding agent and reviewed by me.' "$ROOT/$f" \
+      || { why="$f does not say an AI tool was used"; return 1; }
+    case " $numbers " in *" $number "*) why="two proposals name the same Discussion #$number"; return 1 ;; esac
+    numbers="$numbers $number"
+  done
+}
+
 definition_v11() {
   local f
   for f in spec/agent-shared.md spec/agent-shared.ja.md; do
@@ -1821,6 +1837,7 @@ check "deploy writes an agent inside its checked versions without a version line
 check "the definition and the READMEs say which versions stop the writes" definition_versions
 check "the two Agent Plugins proposals have the parts the contributing guide asks for" proposals_parts
 check "each proposal names the clients it ran on and links the definition" proposals_evidence
+check "each proposal names the Discussion it was posted as, its related threads, and the AI line" proposals_posted
 check "the definition relates itself to Agent Plugins v1.1" definition_v11
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"

@@ -1,7 +1,9 @@
 # Proposal: rules as a portable plugin component
 
-This is the text of a GitHub Discussion proposed to the Agent Plugins specification (agentplugins/agent-plugins-spec).
+This is the text of a GitHub Discussion posted to the Agent Plugins specification as agentplugins/agent-plugins-spec#100.
 A companion proposal covers the hook events each client version supports: [agent-plugins-hook-events.md](agent-plugins-hook-events.md).
+
+Discussion-first proposal per CONTRIBUTING.md. Related threads: agentplugins/agent-plugins-spec#47 proposes a plugin-level orientation file, which describes the plugin, while this proposal covers rules loaded in every session; agentplugins/agent-plugins-spec#35 asks for path-scoped rules on the roadmap.
 
 ## Summary
 
@@ -84,3 +86,5 @@ Its tests check that the lines outside a block keep their bytes, that removing a
 - Precedence when a plugin rule and a user instruction disagree.
 - Rules scoped to paths, such as Copilot's `applyTo` or Cursor's glob rules, which this proposal leaves out of a first version.
 - Size limits, since every rule is loaded into every session.
+
+This proposal was prepared with an AI coding agent and reviewed by me.
