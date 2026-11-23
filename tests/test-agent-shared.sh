@@ -13,6 +13,9 @@ FAIL=0
 T="$(mktemp -d)"
 T="$(cd "$T" && pwd -P)"
 trap 'rm -rf "$T"' EXIT
+# PATH without any folder that holds a real `copilot` command, so only copilot_installed puts one there.
+BASE_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | while IFS= read -r dir; do [ -x "$dir/copilot" ] || printf '%s:' "$dir"; done)"
+BASE_PATH="${BASE_PATH%:}"
 
 ok() { PASS=$((PASS + 1)); printf 'ok    %s\n' "$1"; }
 ng() { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n' "$1"; [ -n "$why" ] && printf '      %s\n' "$why"; }
@@ -73,6 +76,7 @@ chmod +x "$T/bin/codex"
 # A new throwaway HOME with two skills, two rules, and two hooks in ~/.shared, and settings that already
 # hold the user's own entries.
 fresh() {
+  export PATH="$BASE_PATH"
   export HOME="$T/home-$1"
   export AGENT_SHARED_CODEX_BIN="$T/bin/codex"
   export STUB_LOG="$HOME/codex-calls.jsonl"
@@ -103,6 +107,14 @@ JSON
   cat > "$HOME/.codex/hooks.json" <<'JSON'
 {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo my-codex-hook"}]}]}}
 JSON
+}
+
+# Puts a stand-in `copilot` command on PATH, so the Copilot CLI row is written. fresh takes it off again.
+copilot_installed() {
+  mkdir -p "$T/copilot-bin"
+  printf '#!/bin/sh\nexit 0\n' > "$T/copilot-bin/copilot"
+  chmod +x "$T/copilot-bin/copilot"
+  export PATH="$T/copilot-bin:$BASE_PATH"
 }
 
 # Runs agent-shared from the package source in $RUN_DIR. Output goes to $T/out, the exit code to $rc.
@@ -303,6 +315,7 @@ skips_plugin_skills() {
   # A Codex plugin has beta. Copilot CLI reads ~/.agents/skills too, so its folder is there to show that
   # its row does not bring beta back into that folder.
   mkdir -p "$HOME/.codex/plugins/cache/market/tool/1.0.0/skills/beta" "$HOME/.copilot"
+  copilot_installed
   printf -- '---\nname: beta\ndescription: Beta from a Codex plugin.\n---\n' > "$HOME/.codex/plugins/cache/market/tool/1.0.0/skills/beta/SKILL.md"
   printf '[plugins."tool@market"]\nenabled = true\n' > "$HOME/.codex/config.toml"
   deployed || return 1
@@ -981,6 +994,7 @@ PY
 copilot_rules() {
   fresh copilot-rules
   mkdir -p "$HOME/.copilot"
+  copilot_installed
   printf '# My Copilot notes\n\nKeep this line.\n' > "$HOME/$COPILOT_RULES"
   cp "$HOME/$COPILOT_RULES" "$T/copilot-before.md"
   deployed || return 1
@@ -1007,6 +1021,7 @@ PY
 copilot_hooks() {
   fresh copilot-hooks
   mkdir -p "$HOME/.copilot"
+  copilot_installed
   deployed || return 1
   copilot_holds "$HOME/$COPILOT_HOOKS" <<'PY'
 if data.get("version") != 1:
@@ -1031,6 +1046,7 @@ PY
 copilot_removes() {
   fresh copilot-remove
   mkdir -p "$HOME/.copilot"
+  copilot_installed
   deployed || return 1
   grep -q 'Rule two.' "$HOME/$COPILOT_RULES" 2>/dev/null && grep -q 'echo stop' "$HOME/$COPILOT_HOOKS" 2>/dev/null \
     || { why="the first run placed no rule two or stop hook for Copilot CLI"; return 1; }
@@ -1061,6 +1077,7 @@ PY
 copilot_placed() {
   fresh copilot-placed
   mkdir -p "$HOME/.copilot"
+  copilot_installed
   full_source copilot
   run deploy --source "$SRC"
   [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
@@ -1091,10 +1108,65 @@ copilot_absent() {
 copilot_other_hook_files() {
   fresh copilot-others
   mkdir -p "$HOME/.copilot/hooks"
+  copilot_installed
   printf '{"version": 1, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}\n' > "$HOME/.copilot/hooks/mine.json"
   cp "$HOME/.copilot/hooks/mine.json" "$T/copilot-mine-before.json"
   deployed || return 1
   cmp -s "$HOME/.copilot/hooks/mine.json" "$T/copilot-mine-before.json" || { why="~/.copilot/hooks/mine.json changed"; return 1; }
+}
+
+# A Copilot IDE plugin makes ~/.copilot/ide, while the copilot command is not installed.
+copilot_ide_only() {
+  fresh copilot-ide
+  mkdir -p "$HOME/.copilot/ide"
+  deployed || return 1
+  local found
+  found="$(cd "$HOME/.copilot" && find . -mindepth 1 -not -path './ide' -not -path './ide/*' | head -3 | tr '\n' ' ')"
+  [ -z "$found" ] || { why="deploy wrote into ~/.copilot without the copilot command: $found"; return 1; }
+}
+
+# Placed while the command was there, then the command is gone: the run's items leave, the person's stay.
+copilot_skipped_cleanup() {
+  fresh copilot-skipped
+  mkdir -p "$HOME/.copilot/hooks"
+  printf '# My notes\n\nKeep this line.\n' > "$HOME/$COPILOT_RULES"
+  printf '{"version": 1, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo my-copilot-hook"}]}]}}\n' > "$HOME/$COPILOT_HOOKS"
+  printf '{"version": 1, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}\n' > "$HOME/.copilot/hooks/mine.json"
+  copilot_installed
+  deployed || return 1
+  grep -q 'Rule one.' "$HOME/$COPILOT_RULES" && grep -q 'guard.sh' "$HOME/$COPILOT_HOOKS" \
+    || { why="the first run, with the copilot command, did not place the rules and hooks"; return 1; }
+  export PATH="$BASE_PATH"
+  run deploy
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  ! grep -q 'agent-shared' "$HOME/$COPILOT_RULES" || { why="the rules block is still in copilot-instructions.md"; return 1; }
+  grep -q 'Keep this line.' "$HOME/$COPILOT_RULES" || { why="the person's own line is gone"; return 1; }
+  ! grep -q 'guard.sh' "$HOME/$COPILOT_HOOKS" && grep -q 'echo my-copilot-hook' "$HOME/$COPILOT_HOOKS" \
+    || { why="the marked hooks stayed or the hand-written hook is gone"; return 1; }
+  grep -q 'echo mine' "$HOME/.copilot/hooks/mine.json" || { why="the person's other hook file changed"; return 1; }
+  # A file the run alone wrote holds nothing once its items are out, so it is removed.
+  fresh copilot-skipped-empty
+  mkdir -p "$HOME/.copilot"
+  copilot_installed
+  deployed || return 1
+  export PATH="$BASE_PATH"
+  run deploy
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  [ ! -e "$HOME/$COPILOT_RULES" ] && [ ! -e "$HOME/$COPILOT_HOOKS" ] \
+    || { why="a file left holding nothing was not removed: $(ls "$HOME/.copilot" "$HOME/.copilot/hooks" 2>/dev/null | tr '\n' ' ')"; return 1; }
+}
+
+definition_names_needs_command() {
+  local f
+  python3 - "$PKG/src/agent_shared/agents.json" <<'PY' || { why="the Copilot CLI row does not wait for the copilot command"; return 1; }
+import json, sys
+row = next(r for r in json.load(open(sys.argv[1]))["agents"] if r["name"] == "GitHub Copilot CLI")
+sys.exit(0 if row.get("needs_command") == "copilot" and "needs" not in row else 1)
+PY
+  for f in spec/agent-shared.md spec/agent-shared.ja.md README.md README.ja.md; do
+    grep -qF 'needs_command' "$ROOT/$f" && grep -qF '`copilot`' "$ROOT/$f" \
+      || { why="$f does not name needs_command and the copilot command"; return 1; }
+  done
 }
 
 readmes_name_copilot() {
@@ -1198,6 +1270,7 @@ example_deploy() {
   fresh example
   rm -rf "$HOME/.shared"
   mkdir -p "$HOME/.copilot"
+  copilot_installed
   local ex="$ROOT/examples/basic"
   [ -d "$ex/skills" ] && [ -d "$ex/rules" ] && [ -f "$ex/hooks.json" ] || { why="examples/basic lacks skills, rules, or hooks.json"; return 1; }
   approve_source "$ex"
@@ -1345,6 +1418,7 @@ PY
 repo_hooks() {
   fresh repo-hooks
   mkdir -p "$HOME/.copilot"
+  copilot_installed
   repo_with_shared hooks
   approve_source "$REPO/.shared"
   run deploy --repo "$REPO"
@@ -1371,6 +1445,7 @@ PY
 remove_all() {
   fresh remove-all
   mkdir -p "$HOME/.copilot"
+  copilot_installed
   full_source removed
   run deploy --source "$SRC"
   [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
@@ -1531,6 +1606,9 @@ check "deploy writes a repository's hooks into each agent's repository settings"
 check "remove takes out everything one source placed, also after its folder is gone" remove_all
 check "the READMEs link the definition and describe check, approve, and remove" readmes_definition
 check "pyproject names this repository" pyproject_url
+check "deploy writes nothing for Copilot CLI with only an IDE plugin's folder" copilot_ide_only
+check "a skipped Copilot CLI row loses what was placed and keeps the person's own" copilot_skipped_cleanup
+check "the definition and the READMEs name needs_command for Copilot CLI" definition_names_needs_command
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]

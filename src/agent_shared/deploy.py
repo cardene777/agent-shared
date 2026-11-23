@@ -193,6 +193,8 @@ def row_problem(row):
     for key in ("skills", "needs", "repo_skills"):
         if key in row and not isinstance(row[key], str):
             return "the {} of {} is not a path".format(key, name)
+    if "needs_command" in row and not (isinstance(row["needs_command"], str) and row["needs_command"]):
+        return "the needs_command of {} is not a command name".format(name)
     for key in ("rules", "repo_rules"):
         if key in row and rules_problem(row[key]):
             return "the {} of {} need a place and a form ({})".format(key, name, " or ".join(RULE_FORMS))
@@ -671,6 +673,15 @@ def agent_table():
     return load_table(os.path.join(main_path, "agents.json") if os.path.isdir(main_path) else None)
 
 
+def row_present(row):
+    """Whether the agent of a row is on this computer. An agent many people do not use waits for its own command on
+    PATH (`needs_command`) or for a path (`needs`), so its files appear only where it is installed; a folder another
+    product also makes, such as `~/.copilot` of a Copilot IDE plugin, does not tell."""
+    if "needs_command" in row and shutil.which(row["needs_command"]) is None:
+        return False
+    return "needs" not in row or os.path.exists(expand(row["needs"]))
+
+
 def agent_places(row):
     """Where one agent of the table keeps what agent-shared places in the home folder: the skills folder
     (None for an agent that reads another row's folder), the rules place and form (None without rules),
@@ -874,10 +885,10 @@ def deploy(extra_sources, repo_argument):
     plugin_cache = {}
     written_agents = []
     trust_by_hand = set()
+    skipped = []
     for row in table:
-        # An agent many people do not use waits for its own folder, so its files appear only where it is installed.
-        # The last line names only the agents written, so a skipped one prints no line of its own on every run.
-        if "needs" in row and not os.path.isdir(expand(row["needs"])):
+        if not row_present(row):
+            skipped.append(row)
             continue
         written_agents.append(row["name"])
         kind = row.get("plugins")
@@ -927,6 +938,16 @@ def deploy(extra_sources, repo_argument):
                     wanted[os.path.join(place, name)] = (os.path.relpath(path, place), repo)
             else:
                 blocks[place] = {repo.id: sorted(kept.items())}
+
+    # A row skipped now keeps none of the run's marked items in its home files, so items written before, when the
+    # agent was there or a path only looked like it, are taken out. A repository's files are shared with the
+    # people who have the agent, so they are left as they are.
+    for row in skipped:
+        _skills_dir, rules_at, hook_file = agent_places(row)
+        if rules_at and rules_at[1] == "block":
+            blocks.setdefault(rules_at[0], {source.id: [] for source in sources})
+        if hook_file:
+            hook_files.setdefault(hook_file, {"trust": None, "version": None, "groups": {}, "commands": set()})
 
     # The links in the way: something agent-shared did not place, or a link placed from another source.
     for place, (target, source) in sorted(wanted.items()):
@@ -998,11 +1019,9 @@ def deploy(extra_sources, repo_argument):
         os.symlink(target, place)
         notes.append("placed {}".format(shown(place)))
     for place, text in sorted(blocks_text.items()):
-        write_text(place, text)
-        notes.append("wrote the rules block in {}".format(shown(place)))
+        put_text(place, text, "wrote the rules block in {}", notes)
     for place, text in sorted(hooks_text.items()):
-        write_text(place, text)
-        notes.append("wrote the hooks in {}".format(shown(place)))
+        put_text(place, text, "wrote the hooks in {}", notes)
     record.save(run, placed_links)
 
     for place, entry in sorted(hook_files.items()):
@@ -1024,6 +1043,29 @@ def deploy(extra_sources, repo_argument):
         len(skills) + (len(repo.skills()) if repo else 0), len(rules), len(run), "" if len(run) == 1 else "s",
         ", ".join(written_agents)))
     return 0
+
+
+def holds_nothing(text):
+    """Whether a rules or hook file holds nothing once agent-shared's entries are out: no text, or JSON with no
+    key but `version`."""
+    if not text.strip():
+        return True
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and set(data) <= {"version"}
+
+
+def put_text(place, text, done, notes):
+    """Writes a rules or hook file, or removes it when it would hold nothing, so no empty file is left behind."""
+    if holds_nothing(text):
+        if os.path.exists(place):
+            os.unlink(place)
+            notes.append("removed {}, which held nothing else".format(shown(place)))
+        return
+    write_text(place, text)
+    notes.append(done.format(shown(place)))
 
 
 def write_codex_trust(place, notes, warnings):
@@ -1121,11 +1163,9 @@ def remove(source_path):
         os.unlink(place)
         notes.append("removed {}".format(shown(place)))
     for place, text in sorted(blocks_text.items()):
-        write_text(place, text)
-        notes.append("took the rules block out of {}".format(shown(place)))
+        put_text(place, text, "took the rules block out of {}", notes)
     for place, text in sorted(hooks_text.items()):
-        write_text(place, text)
-        notes.append("took the hooks out of {}".format(shown(place)))
+        put_text(place, text, "took the hooks out of {}", notes)
     found = bool(links or blocks_text or hooks_text) or any(sid in record.sources for sid in ids)
     record.forget(ids)
     off.forget(ids)
