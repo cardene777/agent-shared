@@ -1,6 +1,12 @@
+<div align="center">
+
+<img src="assets/icon.svg" width="96" alt="agent-shared icon">
+
 # agent-shared
 
 English · [日本語](README.ja.md)
+
+</div>
 
 `agent-shared` places the skills, rules, and hooks you keep in one folder into every coding agent on your computer.
 Skills and rules are links to the one copy in that folder, so an edit reaches every agent at once.
@@ -10,7 +16,6 @@ Your folder stays on your computer, and the command sends nothing over the netwo
 
 The command needs [uv](https://docs.astral.sh/uv/) and runs on macOS and Linux.
 uv brings Python 3.11 or later when the computer has none.
-The repository is private, so git reads it with your GitHub sign-in.
 
 ```
 uv tool install "git+https://github.com/cardene777/agent-shared"
