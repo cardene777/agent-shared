@@ -13,6 +13,7 @@ pyproject.toml                  The package and its version
 src/agent_shared/               The command and its default agent table, agents.json
 tests/test-agent-shared.sh      Tests with a throwaway HOME, run before every pull request
 README.md, README.ja.md         The guide, in English and in Japanese
+assets/icon.svg                 The icon, on the dark rounded square of agent-shuriken's icon
 CHANGELOG.md                    The releases
 .ikkan/specs/                   Acceptance criteria kept by the ikkan workflow
 ```

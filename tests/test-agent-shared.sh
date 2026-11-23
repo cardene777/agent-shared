@@ -937,6 +937,36 @@ off_documented() {
   grep -q 'exit status' "$T/help.out" && grep -qF 'off.json' "$T/help.out" || { why="off --help does not describe off.json and its exits"; return 1; }
 }
 
+# The icon keeps the dark rounded square of agent-shuriken's icon, so the two read as one family.
+icon_present() {
+  local icon="$ROOT/assets/icon.svg"
+  [ -f "$icon" ] || { why="assets/icon.svg is missing"; return 1; }
+  grep -qF 'viewBox="0 0 256 256"' "$icon" || { why="assets/icon.svg is not a 256 by 256 square"; return 1; }
+  grep -qF 'rx="56" fill="#151a22"' "$icon" || { why="assets/icon.svg lacks the dark rounded square"; return 1; }
+}
+
+readmes_show_icon() {
+  local f
+  for f in README.md README.ja.md; do
+    sed -n '/^## /q;p' "$ROOT/$f" | grep -qF 'src="assets/icon.svg"' \
+      || { why="$f does not show assets/icon.svg before its first section"; return 1; }
+  done
+}
+
+# The repository is public, so installing it needs no sign-in.
+readmes_name_no_sign_in() {
+  ! grep -n -i -E 'private|sign-in|sign in' "$ROOT/README.md" > "$T/words" || { why="README.md:$(head -1 "$T/words")"; return 1; }
+  ! grep -n -E '非公開|ログイン' "$ROOT/README.ja.md" > "$T/words" || { why="README.ja.md:$(head -1 "$T/words")"; return 1; }
+}
+
+readmes_install_here() {
+  local f
+  for f in README.md README.ja.md; do
+    grep -qF 'uv tool install "git+https://github.com/cardene777/agent-shared"' "$ROOT/$f" \
+      || { why="$f does not install from cardene777/agent-shared"; return 1; }
+  done
+}
+
 check "uv tool install puts agent-shared on PATH without any plugin" uv_installs
 check "deploy links every skill into the Claude Code and shared agent folders" links_skills
 check "deploy places nothing in the deprecated Codex skills folder" no_codex_skills
@@ -980,6 +1010,10 @@ check "hooks leaves out what the list switched off" hooks_off
 check "placed names what the list left out for each agent" placed_left_out
 check "an unreadable off.json refuses deploy, hooks, and placed" off_unreadable
 check "the README and the help describe off.json" off_documented
+check "the icon is a square SVG in assets" icon_present
+check "both READMEs show the icon at the top" readmes_show_icon
+check "the READMEs name no sign-in or private repository" readmes_name_no_sign_in
+check "the READMEs install from this repository" readmes_install_here
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]
