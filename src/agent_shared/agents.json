@@ -7,6 +7,14 @@
       "repo_skills": ".claude/skills",
       "rules": {"place": "~/.claude/rules", "form": "link"},
       "hooks": {"file": "~/.claude/settings.json"},
+      "repo_hooks": {"file": ".claude/settings.json"},
+      "events": ["SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion", "PreToolUse", "PermissionRequest",
+                 "PermissionDenied", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "Notification", "MessageDisplay",
+                 "SubagentStart", "SubagentStop", "TaskCreated", "TaskCompleted", "Stop", "StopFailure", "TeammateIdle",
+                 "InstructionsLoaded", "ConfigChange", "CwdChanged", "DirectoryAdded", "FileChanged", "WorktreeCreate",
+                 "WorktreeRemove", "PreCompact", "PostCompact", "PreModelSwitch", "PostModelSwitch", "Elicitation",
+                 "ElicitationResult", "SessionEnd"],
+      "checked": {"command": "claude --version", "from": "2.1.330", "to": "2.1.330"},
       "plugins": "claude"
     },
     {
@@ -14,14 +22,24 @@
       "skills": "~/.agents/skills",
       "repo_skills": ".agents/skills",
       "rules": {"place": "~/.codex/AGENTS.md", "form": "block"},
+      "repo_rules": {"place": "AGENTS.md", "form": "block"},
       "hooks": {"file": "~/.codex/hooks.json", "trust": "codex-app-server"},
+      "repo_hooks": {"file": ".codex/hooks.json"},
+      "events": ["SessionStart", "SessionEnd", "SubagentStart", "PreToolUse", "PermissionRequest", "PostToolUse",
+                 "PreModelRequest", "PostModelRequest", "PreCompact", "PostCompact", "UserPromptSubmit", "SubagentStop",
+                 "Stop", "Interrupt"],
+      "checked": {"command": "codex --version", "from": "0.124.0", "to": "0.171.0"},
       "plugins": "codex"
     },
     {
       "name": "GitHub Copilot CLI",
       "needs": "~/.copilot",
       "rules": {"place": "~/.copilot/copilot-instructions.md", "form": "block"},
-      "hooks": {"file": "~/.copilot/hooks/agent-shared.json", "version": 1}
+      "hooks": {"file": "~/.copilot/hooks/agent-shared.json", "version": 1},
+      "repo_hooks": {"file": ".github/hooks/agent-shared.json", "version": 1},
+      "events": ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+                 "Stop", "SubagentStop", "ErrorOccurred", "PreCompact", "PermissionRequest"],
+      "checked": {"command": "copilot --version", "from": "1.0.62", "to": "1.0.114"}
     }
   ]
 }

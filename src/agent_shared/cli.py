@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from agent_shared import __version__
-from agent_shared.deploy import Refused, Usage, deploy, hooks, placed, switch
+from agent_shared.deploy import Refused, Usage, approve, check, deploy, hooks, placed, remove, switch
 
 DESCRIPTION = """\
 Deploy the skills, rules, and hooks in ~/.shared (and in a repository's .shared) to Claude Code,
@@ -52,6 +52,42 @@ exit status:
   0  printed (every agent of the table is named, with empty lists when the source placed nothing)
   2  the command line, the source folder, the agent table, the record, or an agent's file could not be used"""
 
+CHECK_DESCRIPTION = """\
+Check one source folder against the agent-shared definition (spec/agent-shared.md): the hook
+declaration, the source's own agent table, and the names of its skills. Each problem is printed as
+`<file>: <entry>: <problem>`, for example `hooks.json: hooks.PreToolUse[0].hooks[0]: the hook has no
+command`. Nothing is written."""
+
+CHECK_EPILOG = """\
+exit status:
+  0  no problem
+  1  problems were found and printed
+  2  the command line, the source folder, or the agent table could not be used"""
+
+APPROVE_DESCRIPTION = """\
+Print the hook commands of one source folder and, when you answer yes, record that you approve them.
+deploy places the hooks of a source other than ~/.shared only after this, once per source; ~/.shared
+and a source placed before approvals existed count as approved. The approval is kept in the record."""
+
+APPROVE_EPILOG = """\
+exit status:
+  0  approved (or already approved)
+  1  not approved; nothing was written
+  2  the command line, the source folder, or the record could not be used"""
+
+REMOVE_DESCRIPTION = """\
+Take out everything one source folder placed in every agent: its skill and rule links, its rules
+blocks, its marked hooks, and Codex's trust for those hooks, with its entries in the record and the
+switch list. It relies only on the marks and the record, so it also works after the folder is
+deleted. For a repository's .shared, the repository's own files are cleaned too. Entries without the
+source's mark are left unchanged."""
+
+REMOVE_EPILOG = """\
+exit status:
+  0  removed (or nothing was placed from the folder)
+  1  refused: nothing was written, and each reason is printed
+  2  the command line, the agent table, or the record could not be used"""
+
 EPILOG = """\
 exit status:
   0  deployed (warnings, such as Codex hooks left to trust by hand, are printed)
@@ -98,15 +134,34 @@ def parser():
         turn.add_argument("--agent", required=True, metavar="NAME",
                           help='the agent, as named in the agent table (for example "Claude Code" or Codex)')
         turn.add_argument("item", metavar="ITEM", help="rules/<name>.md, a hook file, or a hook command")
+    checking = commands.add_parser("check", help="check one source folder against the definition, writing nothing",
+                                   description=CHECK_DESCRIPTION, epilog=CHECK_EPILOG,
+                                   formatter_class=argparse.RawDescriptionHelpFormatter)
+    checking.add_argument("--source", default="~/.shared", metavar="DIR", help="the source folder (default ~/.shared)")
+    approving = commands.add_parser("approve", help="approve the hooks of one source once",
+                                    description=APPROVE_DESCRIPTION, epilog=APPROVE_EPILOG,
+                                    formatter_class=argparse.RawDescriptionHelpFormatter)
+    approving.add_argument("--source", required=True, metavar="DIR", help="the source folder whose hooks are approved")
+    removing = commands.add_parser("remove", help="take out everything one source placed in every agent",
+                                   description=REMOVE_DESCRIPTION, epilog=REMOVE_EPILOG,
+                                   formatter_class=argparse.RawDescriptionHelpFormatter)
+    removing.add_argument("--source", required=True, metavar="DIR",
+                          help="the source folder, which may already be deleted")
     return top
 
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    if args.command not in ("deploy", "hooks", "placed", "off", "on"):
+    if args.command not in ("deploy", "hooks", "placed", "off", "on", "check", "approve", "remove"):
         parser().print_help()
         return 2
     try:
+        if args.command == "check":
+            return check(args.source)
+        if args.command == "approve":
+            return approve(args.source)
+        if args.command == "remove":
+            return remove(args.source)
         if args.command == "hooks":
             return hooks(args.agent, args.source)
         if args.command == "placed":

@@ -431,6 +431,7 @@ hooks_every_source() {
   fresh hooks-sources
   mkdir -p "$T/extra-source"
   printf '%s\n' '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo extra"}]}]}}' > "$T/extra-source/hooks.json"
+  approve_source "$T/extra-source"
   hooks_run --agent "Claude Code" --source "$T/extra-source"
   [ "$rc" = 0 ] || { why="hooks exited $rc: $(tail -1 "$T/hooks.err")"; return 1; }
   grep -q 'echo extra' "$T/hooks.out" || { why="the hook of the --source folder was not printed"; return 1; }
@@ -853,6 +854,7 @@ off_named_source_only() {
   printf '#!/bin/sh\nexit 0\n' > "$SRC/hooks/guard.sh"
   printf '%s\n' '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh"}]}]}}' > "$SRC/hooks.json"
   run off --source "$HOME/.shared" --agent Codex hooks/guard.sh
+  approve_source "$SRC"
   run deploy --source "$SRC"
   [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
   marked_commands "$HOME/.codex/hooks.json" Stop | grep -q "^bash $SRC/hooks/guard.sh$" \

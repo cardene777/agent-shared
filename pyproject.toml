@@ -11,7 +11,7 @@ dependencies = []
 agent-shared = "agent_shared.cli:main"
 
 [project.urls]
-Repository = "https://github.com/cardene777/agent-shuriken"
+Repository = "https://github.com/cardene777/agent-shared"
 
 [build-system]
 requires = ["setuptools>=69"]

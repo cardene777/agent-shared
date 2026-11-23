@@ -27,6 +27,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import tomllib
@@ -122,8 +123,9 @@ class Source:
         return {name: os.path.join(base, name) for name in sorted(os.listdir(base))
                 if name.endswith(".md") and not name.startswith(".") and os.path.isfile(os.path.join(base, name))}
 
-    def hooks(self, agent_names):
-        """The declared hooks as (event, group without hooks, hook, tools) with the source folder filled in.
+    def hooks(self, agent_names, root=None):
+        """The declared hooks as (event, group without hooks, hook, tools) with the source folder filled in,
+        or `root` in its place (a repository's hooks name `.shared` relative to the repository root).
         `tools` is the set of agent names the hook goes to, or None for every agent."""
         path = os.path.join(self.path, "hooks.json")
         if not os.path.exists(path):
@@ -144,7 +146,7 @@ class Source:
                 for hook in hooks:
                     if not isinstance(hook, dict) or not isinstance(hook.get("command"), str):
                         raise Usage("a hook of `hooks.{}` in {} has no command string".format(event, shown(path)))
-                    hook = dict(hook, command=hook["command"].replace(ROOT_PLACEHOLDER, self.path))
+                    hook = dict(hook, command=hook["command"].replace(ROOT_PLACEHOLDER, root or self.path))
                     tools = hook.pop("tools", None)
                     if tools is not None:
                         if not isinstance(tools, list) or not tools or not all(isinstance(t, str) for t in tools):
@@ -173,34 +175,56 @@ def load_table(user_table):
     return rows
 
 
-def checked_rows(table, where):
+def rules_problem(value):
+    return not (isinstance(value, dict) and isinstance(value.get("place"), str) and value.get("form") in RULE_FORMS)
+
+
+def hooks_problem(value):
+    return not (isinstance(value, dict) and isinstance(value.get("file"), str)
+                and value.get("trust", TRUST_KINDS[0]) in TRUST_KINDS
+                and ("version" not in value or type(value["version"]) is int))
+
+
+def row_problem(row):
+    """What is wrong with one row of an agent table, or None."""
+    if not isinstance(row, dict) or not isinstance(row.get("name"), str) or not row["name"]:
+        return "the row has no name"
+    name = row["name"]
+    for key in ("skills", "needs", "repo_skills"):
+        if key in row and not isinstance(row[key], str):
+            return "the {} of {} is not a path".format(key, name)
+    for key in ("rules", "repo_rules"):
+        if key in row and rules_problem(row[key]):
+            return "the {} of {} need a place and a form ({})".format(key, name, " or ".join(RULE_FORMS))
+    for key in ("hooks", "repo_hooks"):
+        if key in row and hooks_problem(row[key]):
+            return "the {} of {} need a file, and a version that is a whole number".format(key, name)
+    if "events" in row and not (isinstance(row["events"], list) and row["events"]
+                                and all(isinstance(event, str) and event for event in row["events"])):
+        return "the events of {} are not a list of event names".format(name)
+    if "checked" in row and not (isinstance(row["checked"], dict)
+                                 and all(isinstance(row["checked"].get(key), str) for key in ("from", "to"))):
+        return "the checked versions of {} need from and to".format(name)
+    if "plugins" in row and row["plugins"] not in PLUGIN_KINDS:
+        return "the plugins of {} is not one of {}".format(name, ", ".join(PLUGIN_KINDS))
+    return None
+
+
+def table_problem(table):
     if not isinstance(table, dict) or table.get("version") != TABLE_VERSION or not isinstance(table.get("agents"), list):
-        raise Usage("{} is not an agent table of version {} with an `agents` list".format(where, TABLE_VERSION))
-    rows = []
+        return "it is not an agent table of version {} with an `agents` list".format(TABLE_VERSION)
+    return None
+
+
+def checked_rows(table, where):
+    problem = table_problem(table)
+    if problem:
+        raise Usage("{}: {}".format(where, problem))
     for row in table["agents"]:
-        problem = None
-        if not isinstance(row, dict) or not isinstance(row.get("name"), str) or not row["name"]:
-            problem = "a row has no name"
-        elif "skills" in row and not isinstance(row["skills"], str):
-            problem = "the skills folder of {} is not a path".format(row["name"])
-        elif "needs" in row and not isinstance(row["needs"], str):
-            problem = "the needs of {} is not a path".format(row["name"])
-        elif "repo_skills" in row and not isinstance(row["repo_skills"], str):
-            problem = "the repo_skills of {} is not a path".format(row["name"])
-        elif "rules" in row and not (isinstance(row["rules"], dict) and isinstance(row["rules"].get("place"), str)
-                                     and row["rules"].get("form") in RULE_FORMS):
-            problem = "the rules of {} need a place and a form ({})".format(row["name"], " or ".join(RULE_FORMS))
-        elif "hooks" in row and not (isinstance(row["hooks"], dict) and isinstance(row["hooks"].get("file"), str)
-                                     and row["hooks"].get("trust", TRUST_KINDS[0]) in TRUST_KINDS):
-            problem = "the hooks of {} need a file".format(row["name"])
-        elif "hooks" in row and "version" in row["hooks"] and type(row["hooks"]["version"]) is not int:
-            problem = "the version of the hook file of {} is not a whole number".format(row["name"])
-        elif "plugins" in row and row["plugins"] not in PLUGIN_KINDS:
-            problem = "the plugins of {} is not one of {}".format(row["name"], ", ".join(PLUGIN_KINDS))
+        problem = row_problem(row)
         if problem:
             raise Usage("{}: {}".format(where, problem))
-        rows.append(row)
-    return rows
+    return list(table["agents"])
 
 
 def claude_plugin_skills(warnings):
@@ -317,6 +341,14 @@ class OffList:
         return any(is_command(command, source, item) or runs_file(command, source, item)
                    for item in self.items(source, agent_name))
 
+    def forget(self, ids):
+        """Takes out every entry of the sources `ids`, for a source taken out of every agent."""
+        kept = [(entry, sid) for entry, sid in zip(self.entries, self.ids) if sid not in ids]
+        if len(kept) == len(self.entries):
+            return
+        self.entries, self.ids = [pair[0] for pair in kept], [pair[1] for pair in kept]
+        write_private(self.folder, self.path, {"version": OFF_VERSION, "off": self.entries}, ".off-")
+
     def switch(self, source, agent_name, item, on):
         """Takes the item out of the list (on) or adds it once (off). Returns whether the list changed."""
         here = [i for i, (entry, sid) in enumerate(zip(self.entries, self.ids))
@@ -354,13 +386,35 @@ class Record:
                 return sid, entry
         return None, None
 
+    def approved(self, source):
+        """Whether the person approved the source's hooks. ~/.shared is the person's own, and a source the record
+        held before approvals existed carries no `approved` field and was placed by the person before."""
+        if source.path == os.path.join(home(), ".shared"):
+            return True
+        entry = self.sources.get(source.id)
+        return entry is not None and entry.get("approved", True) is True
+
     def save(self, sources, links_by_source):
         for source in sources:
             links = links_by_source.get(source.id, {})
-            if links:
-                self.sources[source.id] = {"path": source.path, "links": dict(sorted(links.items()))}
+            approved = self.approved(source)
+            if links or approved:
+                self.sources[source.id] = {"path": source.path, "links": dict(sorted(links.items())), "approved": approved}
             else:
                 self.sources.pop(source.id, None)
+        self.write()
+
+    def approve(self, source):
+        entry = self.sources.setdefault(source.id, {"path": source.path, "links": {}})
+        entry["approved"] = True
+        self.write()
+
+    def forget(self, ids):
+        for sid in ids:
+            self.sources.pop(sid, None)
+        self.write()
+
+    def write(self):
         write_private(self.folder, self.path, {"version": RECORD_VERSION, "sources": self.sources}, ".placed-")
 
 
@@ -627,20 +681,26 @@ def agent_places(row):
             expand(row["hooks"]["file"]) if "hooks" in row else None)
 
 
-def agent_hook_groups(declared, agent_name, off):
-    """The groups deploy adds to one agent's hook file, by event, and the (event, command) pairs they carry.
+def agent_hook_groups(declared, row, off):
+    """The groups deploy adds to one agent's hook file, by event, the (event, command) pairs they carry, and
+    the (event, command) pairs left out because the agent reads no such event.
     Each declared hook goes in its own copy of its group, with the source's mark on a last line of its command.
-    A hook the switch list turns off for the agent is left out."""
-    groups, commands = {}, set()
+    A hook the switch list turns off for the agent is left out, and so is a hook whose event the row's
+    `events` do not list; a row without `events` reads every event."""
+    agent_name, events = row["name"], row.get("events")
+    groups, commands, missing = {}, set(), []
     for source, event, bare, hook, tools in declared:
         if tools is not None and agent_name not in tools:
             continue
         if off.hook_off(source, agent_name, hook["command"]):
             continue
+        if events is not None and event not in events:
+            missing.append((event, hook["command"]))
+            continue
         commands.add((event, hook["command"]))
         marked = dict(hook, command=hook["command"] + "\n" + MARK + source.id)
         groups.setdefault(event, []).append(dict(bare, hooks=[marked]))
-    return groups, commands
+    return groups, commands, missing
 
 
 def hooks(agent_name, extra_sources):
@@ -653,11 +713,12 @@ def hooks(agent_name, extra_sources):
     if agent_name not in agent_names:
         raise Usage("the agent {} is not in the agent table (agents: {})".format(agent_name, ", ".join(agent_names)))
     off = OffList()
+    record = Record()
     row = next(row for row in table if row["name"] == agent_name)
     groups = {}
     if "hooks" in row:
-        declared = [(source,) + hook for source in sources for hook in source.hooks(agent_names)]
-        groups, _commands = agent_hook_groups(declared, agent_name, off)
+        declared = [(source,) + hook for source in sources if record.approved(source) for hook in source.hooks(agent_names)]
+        groups = agent_hook_groups(declared, row, off)[0]
     print(json.dumps({"hooks": groups}, ensure_ascii=False, indent=2))
     return 0
 
@@ -790,7 +851,21 @@ def deploy(extra_sources, repo_argument):
                         kind, name, shown(found[name][1].path), shown(source.path)))
                 else:
                     found[name] = (path, source)
-        declared += [(source,) + hook for hook in source.hooks(agent_names)]
+        source_hooks = source.hooks(agent_names)
+        if record.approved(source):
+            declared += [(source,) + hook for hook in source_hooks]
+        elif source_hooks:
+            notes.append("the hooks of {} were not placed: approve them with `agent-shared approve --source {}`"
+                         .format(source.path, source.path))
+    # A repository's hooks go only into the repository's own settings, naming `.shared` from its root.
+    repo_declared = []
+    if repo:
+        repo_hooks = repo.hooks(agent_names, root=".shared")
+        if record.approved(repo):
+            repo_declared = [(repo,) + hook for hook in repo_hooks]
+        elif repo_hooks:
+            notes.append("the hooks of {} were not placed: approve them with `agent-shared approve --source {}`"
+                         .format(repo.path, repo.path))
 
     # links: place -> (target text, source)
     wanted = {}
@@ -798,6 +873,7 @@ def deploy(extra_sources, repo_argument):
     hook_files = {}
     plugin_cache = {}
     written_agents = []
+    trust_by_hand = set()
     for row in table:
         # An agent many people do not use waits for its own folder, so its files appear only where it is installed.
         # The last line names only the agents written, so a skipped one prints no line of its own on every run.
@@ -825,10 +901,17 @@ def deploy(extra_sources, repo_argument):
             else:
                 blocks[place] = {source.id: sorted((name, path) for name, (path, owner) in kept.items() if owner is source)
                                  for source in sources}
-        if hook_file:
-            entry = hook_files.setdefault(hook_file, {"trust": row["hooks"].get("trust"), "version": row["hooks"].get("version"),
-                                                      "groups": {}, "commands": set()})
-            groups, commands = agent_hook_groups(declared, row["name"], off)
+        hook_places = [(hook_file, row.get("hooks"), declared)] if hook_file else []
+        if repo and "repo_hooks" in row:
+            hook_places.append((os.path.join(repo_root, row["repo_hooks"]["file"]), row["repo_hooks"], repo_declared))
+            if (row.get("hooks") or {}).get("trust") and repo_declared:
+                trust_by_hand.add(os.path.join(repo_root, row["repo_hooks"]["file"]))
+        for place, spec, place_declared in hook_places:
+            entry = hook_files.setdefault(place, {"trust": spec.get("trust") if place == hook_file else None,
+                                                  "version": spec.get("version"), "groups": {}, "commands": set()})
+            groups, commands, missing = agent_hook_groups(place_declared, row, off)
+            for event, command in missing:
+                notes.append("left the {} hook `{}` out of {}: it reads no {} event".format(event, command, row["name"], event))
             entry["commands"] |= commands
             for event, added in groups.items():
                 entry["groups"].setdefault(event, []).extend(added)
@@ -836,6 +919,14 @@ def deploy(extra_sources, repo_argument):
             base = os.path.join(repo_root, row["repo_skills"])
             for name, path in repo.skills().items():
                 wanted[os.path.join(base, name)] = (os.path.relpath(path, base), repo)
+        if repo and "repo_rules" in row:
+            place = os.path.join(repo_root, row["repo_rules"]["place"])
+            kept = {name: path for name, path in repo.rules().items() if not off.rule_off(repo, row["name"], name)}
+            if row["repo_rules"]["form"] == "link":
+                for name, path in kept.items():
+                    wanted[os.path.join(place, name)] = (os.path.relpath(path, place), repo)
+            else:
+                blocks[place] = {repo.id: sorted(kept.items())}
 
     # The links in the way: something agent-shared did not place, or a link placed from another source.
     for place, (target, source) in sorted(wanted.items()):
@@ -920,16 +1011,10 @@ def deploy(extra_sources, repo_argument):
         with open(place, encoding="utf-8") as handle:
             if place not in hooks_text and MARK not in handle.read():
                 continue
-        how = "Open /hooks in Codex once and trust the hooks in {}.".format(shown(place))
-        try:
-            changed = trust_codex_hooks(place)
-        except TrustFailed as error:
-            warnings.append("Codex's hook trust was not written ({}). {}".format(error, how))
-            continue
-        if changed is None:
-            warnings.append("Codex was not found, so it does not trust the hooks yet. {}".format(how))
-        elif changed:
-            notes.append("wrote Codex's trust for the hooks in {}".format(shown(place)))
+        write_codex_trust(place, notes, warnings)
+    for place in sorted(trust_by_hand & set(hooks_text)):
+        warnings.append("Codex runs a repository's hooks only after you trust them: open /hooks in Codex once "
+                        "and trust the hooks in {}.".format(shown(place)))
 
     for line in notes:
         print(line)
@@ -938,4 +1023,195 @@ def deploy(extra_sources, repo_argument):
     print("deployed {} skills and {} rules from {} source{} to {}".format(
         len(skills) + (len(repo.skills()) if repo else 0), len(rules), len(run), "" if len(run) == 1 else "s",
         ", ".join(written_agents)))
+    return 0
+
+
+def write_codex_trust(place, notes, warnings):
+    """Asks Codex to trust the marked hooks in its hook file and to forget the trust of hooks no longer there."""
+    how = "Open /hooks in Codex once and trust the hooks in {}.".format(shown(place))
+    try:
+        changed = trust_codex_hooks(place)
+    except TrustFailed as error:
+        warnings.append("Codex's hook trust was not written ({}). {}".format(error, how))
+        return
+    if changed is None:
+        warnings.append("Codex was not found, so it does not trust the hooks yet. {}".format(how))
+    elif changed:
+        notes.append("wrote Codex's trust for the hooks in {}".format(shown(place)))
+
+
+def approve(source_path):
+    """Prints the hook commands of one source and records the person's approval when they answer yes, so
+    deploy places the source's hooks from then on. Returns 0 when approved, 1 when not."""
+    source = existing_source(source_path)
+    agent_names = [row["name"] for row in agent_table()]
+    declared = source.hooks(agent_names)
+    record = Record()
+    print("The hooks of {} run these commands:".format(source.path))
+    for event, bare, hook, _tools in declared:
+        matcher = " {}".format(bare["matcher"]) if "matcher" in bare else ""
+        print("  {}{}: {}".format(event, matcher, hook["command"]))
+    if not declared:
+        print("  (no hooks)")
+    if record.approved(source):
+        print("{} is already approved".format(source.path))
+        return 0
+    sys.stdout.write("Approve them, so deploy places this source's hooks in every agent? [y/N] ")
+    sys.stdout.flush()
+    answer = sys.stdin.readline().strip().lower()
+    if answer not in ("y", "yes"):
+        print("\nnot approved; nothing was written")
+        return 1
+    record.approve(source)
+    print("approved {}".format(source.path))
+    return 0
+
+
+def remove(source_path):
+    """Takes out every link, rules block, and marked hook one source placed from every agent, and the source's
+    entries in the record and the switch list, relying only on the marks and the record, so it also works
+    after the source folder is gone. A repository's `.shared` is also taken out of the repository. Returns 0."""
+    path = expand(source_path)
+    record = Record()
+    off = OffList()
+    ids = {source_id(path)} | {sid for sid, entry in record.sources.items() if entry.get("path") == path}
+    table = agent_table()
+    repo_root = os.path.dirname(path) if os.path.basename(path) == ".shared" else None
+    rule_files, hook_files = set(), {}
+    for row in table:
+        _skills_dir, rules_at, hook_file = agent_places(row)
+        if rules_at and rules_at[1] == "block":
+            rule_files.add(rules_at[0])
+        if hook_file:
+            hook_files[hook_file] = (row.get("hooks") or {}).get("trust")
+        if repo_root and "repo_rules" in row and row["repo_rules"]["form"] == "block":
+            rule_files.add(os.path.join(repo_root, row["repo_rules"]["place"]))
+        if repo_root and "repo_hooks" in row:
+            hook_files.setdefault(os.path.join(repo_root, row["repo_hooks"]["file"]), None)
+
+    refusals, notes, warnings = [], [], []
+    links = [place for place, target in sorted(record.links(ids).items()) if still_placed(place, target)]
+    blocks_text = {}
+    for place in sorted(rule_files):
+        if not os.path.exists(place):
+            continue
+        with open(place, encoding="utf-8") as handle:
+            text = handle.read()
+        lines = text.splitlines(keepends=True)
+        for sid in sorted(ids):
+            found = block_lines(lines, sid, place, refusals)
+            if found:
+                del lines[found[0]:found[1] + 1]
+        if "".join(lines) != text:
+            blocks_text[place] = "".join(lines)
+    hooks_text = {}
+    for place in sorted(hook_files):
+        if not os.path.exists(place):
+            continue
+        data = read_agent_json(place, refusals)
+        if data is None:
+            continue
+        new = with_hooks(data, ids, {})
+        if new != data:
+            hooks_text[place] = json.dumps(new, ensure_ascii=False, indent=2) + "\n"
+    if refusals:
+        raise Refused(refusals)
+
+    for place in links:
+        os.unlink(place)
+        notes.append("removed {}".format(shown(place)))
+    for place, text in sorted(blocks_text.items()):
+        write_text(place, text)
+        notes.append("took the rules block out of {}".format(shown(place)))
+    for place, text in sorted(hooks_text.items()):
+        write_text(place, text)
+        notes.append("took the hooks out of {}".format(shown(place)))
+    found = bool(links or blocks_text or hooks_text) or any(sid in record.sources for sid in ids)
+    record.forget(ids)
+    off.forget(ids)
+    for place, trust in sorted(hook_files.items()):
+        if trust == "codex-app-server" and place in hooks_text:
+            write_codex_trust(place, notes, warnings)
+    for line in notes:
+        print(line)
+    for line in warnings:
+        print("warning: " + line)
+    print("removed everything {} placed".format(path) if found else "nothing was placed from {}".format(path))
+    return 0
+
+
+def check(source_path):
+    """Checks one source folder against the definition and prints each problem as `<file>: <entry>: <problem>`.
+    Writes nothing. Returns 0 when there is none, 1 otherwise."""
+    source = existing_source(source_path)
+    problems = []
+    table_path = os.path.join(source.path, "agents.json")
+    own_rows = []
+    if os.path.exists(table_path):
+        try:
+            table = read_json(table_path, "the agent table")
+        except Usage as error:
+            problems.append("{}: {}".format(table_path, error))
+            table = None
+        if table is not None and table_problem(table):
+            problems.append("{}: agents: {}".format(table_path, table_problem(table)))
+        elif table is not None:
+            for index, row in enumerate(table["agents"]):
+                problem = row_problem(row)
+                if problem:
+                    problems.append("{}: agents[{}]: {}".format(table_path, index, problem))
+                else:
+                    own_rows.append(row)
+    rows = agent_table()
+    for row in own_rows:
+        rows = [known for known in rows if known["name"] != row["name"]] + [row]
+    agent_names = {row["name"] for row in rows}
+    every_event = any("events" not in row for row in rows)
+    known_events = {event for row in rows for event in row.get("events", [])}
+
+    hooks_path = os.path.join(source.path, "hooks.json")
+    if os.path.exists(hooks_path):
+        try:
+            data = read_json(hooks_path, "the hook declaration")
+        except Usage as error:
+            problems.append("{}: {}".format(hooks_path, error))
+            data = {}
+        events = data.get("hooks") if isinstance(data, dict) else None
+        if not isinstance(events, dict):
+            problems.append("{}: hooks: there is no `hooks` object that maps events to lists of groups".format(hooks_path))
+            events = {}
+        for event, groups in events.items():
+            if not every_event and event not in known_events:
+                problems.append("{}: hooks.{}: no agent in the table reads the event {}".format(hooks_path, event, event))
+            if not isinstance(groups, list):
+                problems.append("{}: hooks.{}: the event holds no list of groups".format(hooks_path, event))
+                continue
+            for gi, group in enumerate(groups):
+                inner = group.get("hooks") if isinstance(group, dict) else None
+                if not isinstance(inner, list) or not inner:
+                    problems.append("{}: hooks.{}[{}]: the group has no list of hooks".format(hooks_path, event, gi))
+                    continue
+                for hi, hook in enumerate(inner):
+                    entry = "hooks.{}[{}].hooks[{}]".format(event, gi, hi)
+                    if not isinstance(hook, dict) or not isinstance(hook.get("command"), str) or not hook["command"]:
+                        problems.append("{}: {}: the hook has no command".format(hooks_path, entry))
+                        continue
+                    unknown = sorted(set(hook.get("tools") or []) - agent_names) if isinstance(hook.get("tools"), list) else []
+                    if unknown:
+                        problems.append("{}: {}: tools names agents not in the table: {}".format(hooks_path, entry, ", ".join(unknown)))
+
+    for name, folder in source.skills().items():
+        skill_file = os.path.join(folder, "SKILL.md")
+        with open(skill_file, encoding="utf-8") as handle:
+            head = handle.read().split("\n---", 1)[0]
+        declared = re.search(r"^name:\s*(\S+)\s*$", head, re.M)
+        if not declared or declared.group(1).strip("'\"") != name:
+            problems.append("{}: name: the skill's name must equal its folder {}".format(skill_file, name))
+
+    for line in problems:
+        print(line)
+    if problems:
+        print("{} problem{} in {}".format(len(problems), "" if len(problems) == 1 else "s", source.path))
+        return 1
+    print("ok: {}".format(source.path))
     return 0

@@ -11,6 +11,7 @@ English · [日本語](README.ja.md)
 `agent-shared` places the skills, rules, and hooks you keep in one folder into every coding agent on your computer.
 Skills and rules are links to the one copy in that folder, so an edit reaches every agent at once.
 Your folder stays on your computer, and the command sends nothing over the network.
+How a source folder is placed into each agent is written as an open definition, [spec/agent-shared.md](spec/agent-shared.md), so other tools can place the same items.
 
 ## Install
 
@@ -64,16 +65,48 @@ Codex also reads `~/.codex/skills`, which Codex keeps only for older setups, so 
 Codex runs a hook only after you trust it, so the command writes that trust through `codex app-server`, the same way Codex's `/hooks` screen does.
 When the `codex` command is missing or does not answer, the command says so and asks you to open `/hooks` in Codex once.
 
-## A repository's skills
+## A repository's skills, rules, and hooks
 
-A repository can keep its own skills in `.shared/skills`.
-Running `agent-shared deploy` inside the repository, or with `--repo <folder>`, links them into the repository's `.claude/skills` and `.agents/skills` with relative links, so the links work in every clone.
-A repository's rules stay in its `AGENTS.md`, and its `CLAUDE.md` reads them with the line `@AGENTS.md`.
+A repository can keep its own skills, rules, and hooks in `.shared`.
+Running `agent-shared deploy` inside the repository, or with `--repo <folder>`, places them into the repository itself, so every clone gets them.
+
+| Item | Where |
+|---|---|
+| Skills | relative links in `.claude/skills` and `.agents/skills` |
+| Rules | one block of the repository's `AGENTS.md`, which `CLAUDE.md` reads with the line `@AGENTS.md` |
+| Hooks | `.claude/settings.json`, `.codex/hooks.json`, and `.github/hooks/agent-shared.json`, naming `.shared` from the repository root |
+
+The repository's hooks are placed only after you approve its `.shared` once, as below.
+Codex runs a repository's hooks only after you trust them, so the command asks you to open `/hooks` in Codex once.
+
+## Approving a source's hooks
+
+A hook runs a command, so the command places the hooks of a source other than `~/.shared` only after you approve that source once.
+
+```
+agent-shared approve --source ~/apps/my-tool/.shared
+```
+
+`agent-shared approve` prints every hook command of the source and asks you to answer `y`.
+Until then, `agent-shared deploy` places the source's skills and rules, places none of its hooks, and prints the command that approves it.
+`~/.shared`, and a source the record held before approvals existed, count as approved.
+
+## Taking a source out
+
+`agent-shared remove --source <folder>` takes out everything one source placed in every agent: its links, its rules blocks, its marked hooks, and Codex's trust for those hooks.
+It reads only the marks and the record, so it works after you delete the folder, and it leaves entries you wrote by hand unchanged.
+
+## Checking a source folder
+
+`agent-shared check --source <folder>` checks a source folder against the definition and writes nothing.
+It prints each problem as `<file>: <entry>: <problem>`, for example an event no agent reads, a hook without a command, or a row of `agents.json` without a name, and exits with status 1 when there is one.
+[examples/basic](examples/basic) is a source folder that passes it.
 
 ## The agent table
 
-The command carries a table of where each agent keeps its files.
+The command carries a table of where each agent keeps its files, [src/agent_shared/agents.json](src/agent_shared/agents.json), which the definition publishes for every tool.
 A row in `~/.shared/agents.json` with a new name adds an agent, and a row with the name of a default row replaces it.
+A hook whose event a row does not list is not written for that agent, and the run names the hook and the agent.
 
 ```json
 {"version": 1, "agents": [{"name": "My agent", "skills": "~/.my-agent/skills"}]}
@@ -86,7 +119,11 @@ A row in `~/.shared/agents.json` with a new name adds an agent, and a row with t
 | `needs` | A folder that must exist for the row to be written, such as `~/.copilot` |
 | `repo_skills` | The folder in a repository that gets a link per repository skill |
 | `rules` | `place` and `form`: `link` puts a link per rule in the folder `place`, `block` writes the rules in one block of the file `place` |
+| `repo_rules` | The same as `rules`, with `place` relative to the repository root |
 | `hooks` | `file` gets the hooks. `version` is written on top of a file that holds hooks. `trust: codex-app-server` also writes Codex's trust for them |
+| `repo_hooks` | The same as `hooks`, with `file` relative to the repository root |
+| `events` | The hook events the agent reads. A row without it reads every event |
+| `checked` | `command` prints the installed version, and `from` and `to` are the versions the row was checked against |
 | `plugins` | `claude` or `codex`: skills that a plugin installed in that agent already has are not placed for it |
 
 ## More than one source
@@ -109,7 +146,7 @@ The agent lists each skill once, and the plugin you chose to install keeps worki
 |---|---|
 | Reads | The source folders, `~/.claude/plugins/installed_plugins.json`, `enabledPlugins` in `~/.claude/settings.json`, `~/.codex/config.toml`, and the skill folders under `~/.codex/plugins/cache`. `placed` reads only the record and the places in the agent table |
 | Writes | The places in the agent table, only for what it placed itself |
-| Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link it placed, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write. `AGENT_SHARED_STATE` moves the folder |
+| Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link it placed and each source you approved, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write. `AGENT_SHARED_STATE` moves the folder |
 | Runs | `codex app-server`, to write Codex's trust for the hooks it placed. `AGENT_SHARED_CODEX_BIN` names another `codex` command |
 | Sends | Nothing over the network |
 
