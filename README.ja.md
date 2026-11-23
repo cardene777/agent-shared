@@ -58,7 +58,8 @@ agent-shared deploy
 | Codex | `~/.agents/skills`にスキルごとのリンク | `~/.codex/AGENTS.md`の中の1つの囲み | `~/.codex/hooks.json` | `.agents/skills` |
 | GitHub Copilot CLI | Codexの`~/.agents/skills`を読む | `~/.copilot/copilot-instructions.md`の中の1つの囲み | `~/.copilot/hooks/agent-shared.json` | |
 
-GitHub Copilot CLIへは、`~/.copilot`が在る時だけルールとhookを書くので、入れていないPCには何も作りません。
+GitHub Copilot CLIへは、`copilot`の命令が`PATH`に在る時だけ (`needs_command`) ルールとhookを書くので、入れていないPCには、IDEのCopilotが`~/.copilot`を作っていても何も作りません。
+命令が無くなると、次の配りで`~/.copilot`からルールの囲みとhookを外し、何も残らないファイルは消します。
 hookのファイルはClaude Codeのhookと同じ形の頭に`"version": 1`を置いた物で、Copilot CLIはこの形の時にClaude Codeと同じ道具の名前をscriptへ渡すため、同じhookがそのまま動きます。
 Gemini CLIも、`~/.agents/skills`のスキルを読みます。
 Codexは古い置き場の`~/.codex/skills`も読み続けているため、コマンドはそこに何も置かず、同じスキルが2回並ばないようにします。
@@ -117,7 +118,8 @@ agent-shared approve --source ~/apps/my-tool/.shared
 |---|---|
 | `name` | エージェントの名前。`hooks.json`の`tools`もこの名前を書く |
 | `skills` | スキルごとのリンクを置くフォルダー。無い行はスキルを置かない |
-| `needs` | 在る時だけその行を書くフォルダー。例は`~/.copilot` |
+| `needs` | 在る時だけその行を書くpath |
+| `needs_command` | `PATH`に在る時だけその行を書く命令。例は`copilot` |
 | `repo_skills` | リポジトリの中で、そのリポジトリのスキルのリンクを置くフォルダー |
 | `rules` | `place`と`form`。`link`は`place`のフォルダーにルールごとのリンクを置き、`block`は`place`のファイルの1つの囲みにルールを書く |
 | `repo_rules` | `rules`と同じ。`place`はリポジトリの根からのpath |

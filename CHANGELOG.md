@@ -3,6 +3,11 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
+## Unreleased
+
+- The GitHub Copilot CLI row waits for the `copilot` command on `PATH` (`needs_command`) instead of the folder `~/.copilot`, which a Copilot IDE plugin also makes, so a computer without Copilot CLI gets nothing
+- A row that is skipped loses the run's marked rules block and hooks in its home files, and a rules or hook file left holding nothing is removed
+
 ## [0.2.0] - 2026-11-23
 
 - The default agent table gives GitHub Copilot CLI the rules in one block of `~/.copilot/copilot-instructions.md` and the hooks in `~/.copilot/hooks/agent-shared.json`, only when `~/.copilot` exists

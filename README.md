@@ -58,7 +58,8 @@ agent-shared deploy
 | Codex | a link per skill in `~/.agents/skills` | one block in `~/.codex/AGENTS.md` | `~/.codex/hooks.json` | `.agents/skills` |
 | GitHub Copilot CLI | reads Codex's `~/.agents/skills` | one block in `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/agent-shared.json` | |
 
-GitHub Copilot CLI gets its rules and hooks only when `~/.copilot` exists, so nothing is created for it on a computer without it.
+GitHub Copilot CLI gets its rules and hooks only when the `copilot` command is on `PATH` (`needs_command`), so nothing is created for it on a computer without it, even where a Copilot IDE plugin made `~/.copilot`.
+When the command is gone, the next deploy takes its rules block and hooks out of `~/.copilot` again and removes a file left holding nothing.
 Its hook file takes the same shape as Claude Code's hooks with `"version": 1` on top, and Copilot CLI passes Claude Code's tool names to the scripts in that shape, so the same hooks run unchanged.
 Gemini CLI reads the skills in `~/.agents/skills` too.
 Codex also reads `~/.codex/skills`, which Codex keeps only for older setups, so the command places nothing there and a skill is not listed twice.
@@ -116,7 +117,8 @@ A hook whose event a row does not list is not written for that agent, and the ru
 |---|---|
 | `name` | The agent's name, also used by `tools` in `hooks.json` |
 | `skills` | The folder that gets a link per skill. A row without it places no skills |
-| `needs` | A folder that must exist for the row to be written, such as `~/.copilot` |
+| `needs` | A path that must exist for the row to be written |
+| `needs_command` | A command that must be on `PATH` for the row to be written, such as `copilot` |
 | `repo_skills` | The folder in a repository that gets a link per repository skill |
 | `rules` | `place` and `form`: `link` puts a link per rule in the folder `place`, `block` writes the rules in one block of the file `place` |
 | `repo_rules` | The same as `rules`, with `place` relative to the repository root |

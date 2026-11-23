@@ -82,7 +82,7 @@ hookはClaude Codeのhookの形で1回だけ宣言し、エージェントの表
 |---|---|---|---|
 | Claude Code | `~/.claude/rules`にルールごとのリンク | `~/.claude/settings.json` | 宣言のまま |
 | Codex | `~/.codex/AGENTS.md`の中の1つの囲み | `~/.codex/hooks.json` | 宣言のまま。置いた各hookにCodexの信頼の印も書く |
-| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md`の中の1つの囲み | `~/.copilot/hooks/agent-shared.json` | 宣言のままで、頭に`"version": 1`を置く。`~/.copilot`が在る時だけ書く |
+| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md`の中の1つの囲み | `~/.copilot/hooks/agent-shared.json` | 宣言のままで、頭に`"version": 1`を置く。`copilot`の命令が`PATH`に在る時だけ書く (`needs_command`) |
 
 スキルは、Claude Codeには`~/.claude/skills`へ、`~/.agents/skills`を読むエージェント (CodexとGitHub Copilot CLIを含む) にはそこへ置きます。
 
@@ -102,7 +102,8 @@ hookはClaude Codeのhookの形で1回だけ宣言し、エージェントの表
 | `repo_hooks` | `hooks`と同じ。`file`はリポジトリの根からのpath |
 | `events` | エージェントが読むhookのイベント。無い行は全部のイベントを読む |
 | `checked` | `command`は入っている版を出す命令、`from`と`to`はその行を確かめた一番低い版と一番高い版 |
-| `needs` | 在る時だけその行を書くフォルダー |
+| `needs` | 在る時だけその行を書くpath |
+| `needs_command` | `PATH`に在る時だけその行を書く命令。飛ばした行のファイルからは今回の配る元の印を持つ物を外し、何も残らないファイルは消す |
 | `plugins` | `claude`か`codex`。そのエージェントに入れたプラグインが既に持つスキルは、そのエージェントへ置かない |
 
 ```json

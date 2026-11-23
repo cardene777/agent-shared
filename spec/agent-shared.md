@@ -80,7 +80,7 @@ A tool writes each hook into every agent of the agent table in that agent's shap
 |---|---|---|---|
 | Claude Code | a link per rule in `~/.claude/rules` | `~/.claude/settings.json` | as declared |
 | Codex | one block in `~/.codex/AGENTS.md` | `~/.codex/hooks.json` | as declared, with Codex's trust written for each placed hook |
-| GitHub Copilot CLI | one block in `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/agent-shared.json` | as declared, with `"version": 1` on top; written only when `~/.copilot` exists |
+| GitHub Copilot CLI | one block in `~/.copilot/copilot-instructions.md` | `~/.copilot/hooks/agent-shared.json` | as declared, with `"version": 1` on top; written only when the `copilot` command is on `PATH` (`needs_command`) |
 
 Skills go into `~/.claude/skills` for Claude Code and into `~/.agents/skills` for the agents that read it, Codex and GitHub Copilot CLI among them.
 
@@ -100,7 +100,8 @@ A row of `~/.shared/agents.json` with a new name adds an agent, and a row with t
 | `repo_hooks` | The same as `hooks`, with `file` relative to the repository root |
 | `events` | The hook events the agent reads; a row without it reads every event |
 | `checked` | `command` prints the installed version, and `from` and `to` are the lowest and highest versions the row was checked against |
-| `needs` | A folder that must exist for the row to be written |
+| `needs` | A path that must exist for the row to be written |
+| `needs_command` | A command that must be on `PATH` for the row to be written; a row that is skipped loses the run's marked items in its files, and a file left holding nothing is removed |
 | `plugins` | `claude` or `codex`: a skill that a plugin installed in that agent already has is not placed for it |
 
 ```json

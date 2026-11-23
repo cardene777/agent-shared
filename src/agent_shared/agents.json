@@ -33,7 +33,7 @@
     },
     {
       "name": "GitHub Copilot CLI",
-      "needs": "~/.copilot",
+      "needs_command": "copilot",
       "rules": {"place": "~/.copilot/copilot-instructions.md", "form": "block"},
       "hooks": {"file": "~/.copilot/hooks/agent-shared.json", "version": 1},
       "repo_hooks": {"file": ".github/hooks/agent-shared.json", "version": 1},
