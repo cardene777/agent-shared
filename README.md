@@ -150,7 +150,7 @@ The agent lists each skill once, and the plugin you chose to install keeps worki
 |---|---|
 | Reads | The source folders, `~/.claude/plugins/installed_plugins.json`, `enabledPlugins` in `~/.claude/settings.json`, `~/.codex/config.toml`, and the skill folders under `~/.codex/plugins/cache`. `placed` reads only the record and the places in the agent table |
 | Writes | The places in the agent table, only for what it placed itself |
-| Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link it placed and each source you approved, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write. `AGENT_SHARED_STATE` moves the folder |
+| Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link it placed and each source you approved, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write and that `agent-shared remove` drops the removed source's entries from. `AGENT_SHARED_STATE` moves the folder |
 | Runs | `codex app-server`, to write Codex's trust for the hooks it placed. `AGENT_SHARED_CODEX_BIN` names another `codex` command |
 | Sends | Nothing over the network |
 
