@@ -1,6 +1,6 @@
 [project]
 name = "agent-shared"
-version = "0.2.3"
+version = "0.2.4"
 description = "Deploy one folder of skills, rules, and hooks to Claude Code, Codex, and other coding agents"
 license = {text = "MIT"}
 authors = [{name = "cardene777"}]
