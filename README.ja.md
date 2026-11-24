@@ -152,7 +152,7 @@ Claude CodeかCodexに入れたプラグインが、フォルダーのスキル�
 |---|---|
 | 読む物 | 配る元のフォルダー、`~/.claude/plugins/installed_plugins.json`、`~/.claude/settings.json`の`enabledPlugins`、`~/.codex/config.toml`、`~/.codex/plugins/cache`の下のスキルのフォルダー。`placed`は記録とエージェントの表の置き場だけを読む |
 | 書く物 | エージェントの表の置き場。自分が置いた物だけ |
-| 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧。`AGENT_SHARED_STATE`でフォルダーを変えられる |
+| 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧で、`agent-shared remove`は外した配る元の項目をそこから消す。`AGENT_SHARED_STATE`でフォルダーを変えられる |
 | 動かす物 | `codex app-server`。置いたhookにCodexの信頼の印を書くため。`AGENT_SHARED_CODEX_BIN`で別の`codex`のコマンドを指せる |
 | 送る物 | ネットワークには何も送らない |
 

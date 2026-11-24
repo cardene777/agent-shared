@@ -1265,6 +1265,14 @@ readmes_edit_reach() {
     || { why="README.ja.md does not say that Codex and Copilot CLI see a rule edit on the next deploy"; return 1; }
 }
 
+# The READMEs name every command that writes off.json, remove included (#33).
+readmes_off_writers() {
+  grep -qF '`agent-shared remove` drops the removed source'"'"'s entries from' "$ROOT/README.md" \
+    || { why="README.md does not say that remove drops entries from off.json"; return 1; }
+  grep -qF '`agent-shared remove`は外した配る元の項目をそこから消す' "$ROOT/README.ja.md" \
+    || { why="README.ja.md does not say that remove drops entries from off.json"; return 1; }
+}
+
 # A folder that still holds the person's file stays when agent-shared takes its own file out of it.
 person_file_folder() {
   fresh person-folder
@@ -1860,6 +1868,7 @@ check "taking out the last skill link removes its emptied folder" emptied_skill_
 check "remove leaves no empty folder in the repository" remove_repo_folders
 check "removing ~/.shared keeps the folders right under the home folder" remove_home_source
 check "the READMEs say which agents see an edit at once and which on the next deploy" readmes_edit_reach
+check "the READMEs name every command that writes off.json" readmes_off_writers
 check "a folder holding the person's file stays" person_file_folder
 check "the definition and the READMEs say emptied folders are removed" definition_emptied_folders
 check "deploy writes nothing for an agent older than its checked versions" version_older
