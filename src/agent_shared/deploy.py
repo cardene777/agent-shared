@@ -1198,7 +1198,10 @@ def remove(source_path):
     off = OffList()
     ids = {source_id(path)} | {sid for sid, entry in record.sources.items() if entry.get("path") == path}
     table = agent_table()
-    repo_root = os.path.dirname(path) if os.path.basename(path) == ".shared" else None
+    # ~/.shared is the person's own source, not a repository's: as in find_repo(), the home folder is never a
+    # repository, so the folders right under it stay when they are left empty (#29).
+    parent = os.path.dirname(path)
+    repo_root = parent if os.path.basename(path) == ".shared" and parent != home() else None
     rule_files, hook_files = set(), {}
     for row in table:
         _skills_dir, rules_at, hook_file = agent_places(row)
