@@ -3,7 +3,7 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
-## Unreleased
+## [0.2.4] - 2026-11-24
 
 - Two proposals to Agent Plugins, in `docs/proposals/`: rules as a portable plugin component, and the hook events each client version supports with a report of every hook a client does not run, posted as Discussions agentplugins/agent-plugins-spec#100 and #101
 - The definition's relation section names the portable hooks of Agent Plugins v1.1 and the two proposals
