@@ -63,7 +63,7 @@ Two source folders in one run that hold a skill or a rule of the same name are r
 
 | Field | Meaning |
 |---|---|
-| `command` | The shell command the agent runs. `${CLAUDE_PLUGIN_ROOT}` is replaced by the source folder's path, or by `.shared` in a repository |
+| `command` | The shell command the agent runs. `${CLAUDE_PLUGIN_ROOT}` is replaced by the source folder's path, or in a repository by `"$(git rev-parse --show-toplevel 2>/dev/null \|\| pwd)"/.shared`, so the hook finds `.shared` from any folder of the repository |
 | `timeout` | Seconds, as Claude Code reads it |
 | `tools` | An optional list of agent names; the hook goes only to those agents, and the field is not written |
 
@@ -155,7 +155,7 @@ A repository's `.shared` is placed into the repository itself, so every clone ge
 |---|---|
 | Skills | a relative link per skill in each row's `repo_skills` |
 | Rules | one block of each row's `repo_rules`, `AGENTS.md` in the published table |
-| Hooks | each row's `repo_hooks`, with `${CLAUDE_PLUGIN_ROOT}` replaced by `.shared` |
+| Hooks | each row's `repo_hooks`, with `${CLAUDE_PLUGIN_ROOT}` replaced by `"$(git rev-parse --show-toplevel 2>/dev/null \|\| pwd)"/.shared` |
 
 Codex runs a repository's hooks only after the person trusts them in Codex, so the run says to open `/hooks` in Codex.
 

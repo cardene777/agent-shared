@@ -1689,11 +1689,61 @@ for path in (".claude/settings.json", ".codex/hooks.json", ".github/hooks/agent-
         fail("%s was not written" % path)
     data = json.load(open(full))
     commands = [h["command"] for g in data.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", [])]
-    if not any(c.startswith("bash .shared/hooks/check.sh\n# agent-shared") for c in commands):
+    if not any(c.startswith("bash ") and ".shared/hooks/check.sh\n# agent-shared" in c for c in commands):
         fail("%s has no marked hook running .shared/hooks/check.sh: %r" % (path, commands))
     if path.startswith(".github") and data.get("version") != 1:
         fail("%s has no version 1" % path)
 PY
+}
+
+# The three agents' repository hook files, relative to the repository.
+REPO_HOOK_FILES=".claude/settings.json .codex/hooks.json .github/hooks/agent-shared.json"
+
+# A repository with .shared in a real git work tree, a src/ subfolder, and a hook script that exits 2, deployed
+# for the three agents.
+deployed_git_repo() {
+  fresh "repo-git-$1"
+  mkdir -p "$HOME/.copilot"
+  copilot_installed
+  repo_with_shared "git-$1"
+  rm -rf "$REPO/.git"
+  git init -q "$REPO" || { why="git init failed"; return 1; }
+  mkdir -p "$REPO/src"
+  printf '#!/bin/sh\nexit 2\n' > "$REPO/.shared/hooks/check.sh"
+  approve_source "$REPO/.shared"
+  run deploy --repo "$REPO"
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+}
+
+repo_hooks_git_root() {
+  deployed_git_repo root || return 1
+  want='bash "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"/.shared/hooks/check.sh'
+  for path in $REPO_HOOK_FILES; do
+    [ -f "$REPO/$path" ] || { why="$path was not written"; return 1; }
+    got="$(marked_commands "$REPO/$path" PreToolUse)"
+    [ "$got" = "$want" ] || { why="$path names the script as: $got"; return 1; }
+  done
+}
+
+repo_hooks_subfolder() {
+  deployed_git_repo sub || return 1
+  for path in $REPO_HOOK_FILES; do
+    # The whole placed command, its mark line included, as the agent runs it.
+    command="$(python3 - "$REPO/$path" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+found = [hook["command"] for group in data.get("hooks", {}).get("PreToolUse", []) for hook in group.get("hooks", [])
+         if hook.get("command", "").rsplit("\n", 1)[-1].startswith("# agent-shared")]
+print(found[0] if found else "")
+PY
+)"
+    [ -n "$command" ] || { why="$path has no marked hook"; return 1; }
+    for dir in "$REPO" "$REPO/src"; do
+      (cd "$dir" && sh -c "$command") > /dev/null 2>&1
+      code=$?
+      [ "$code" = 2 ] || { why="the hook of $path exited $code in ${dir#"$T/"}, not the script's 2"; return 1; }
+    done
+  done
 }
 
 remove_all() {
@@ -1857,6 +1907,8 @@ check "approve prints the commands and lets the next deploy write them" approve_
 check "a source placed before and ~/.shared keep their hooks without approval" approved_before
 check "deploy writes a repository's rules in one block of its AGENTS.md" repo_rules
 check "deploy writes a repository's hooks into each agent's repository settings" repo_hooks
+check "a repository's hook commands name .shared from the git root for every agent" repo_hooks_git_root
+check "a repository's hook run from a subfolder exits with its script's own code" repo_hooks_subfolder
 check "remove takes out everything one source placed, also after its folder is gone" remove_all
 check "the READMEs link the definition and describe check, approve, and remove" readmes_definition
 check "pyproject names this repository" pyproject_url

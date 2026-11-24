@@ -43,6 +43,10 @@ TABLE_VERSION = 1
 RECORD_VERSION = 1
 OFF_VERSION = 1
 ROOT_PLACEHOLDER = "${CLAUDE_PLUGIN_ROOT}"
+# What a repository's hooks name in place of ROOT_PLACEHOLDER. The agents run a hook in the folder they were
+# started in, which may be below the repository root, so the command finds .shared from the git root, and from
+# the working folder outside a git work tree.
+REPO_HOOK_ROOT = '"$(git rev-parse --show-toplevel 2>/dev/null || pwd)"/.shared'
 # What may come right before or after a file's path inside a command, so `hooks/a.sh` is not found in
 # `hooks/a.sh.orig` or in `other/hooks/a.sh`.
 PATH_CHARACTER = r"[\w./-]"
@@ -126,7 +130,7 @@ class Source:
 
     def hooks(self, agent_names, root=None):
         """The declared hooks as (event, group without hooks, hook, tools) with the source folder filled in,
-        or `root` in its place (a repository's hooks name `.shared` relative to the repository root).
+        or `root` in its place (a repository's hooks name `.shared` from the repository's git root).
         `tools` is the set of agent names the hook goes to, or None for every agent."""
         path = os.path.join(self.path, "hooks.json")
         if not os.path.exists(path):
@@ -908,10 +912,10 @@ def deploy(extra_sources, repo_argument):
         elif source_hooks:
             notes.append("the hooks of {} were not placed: approve them with `agent-shared approve --source {}`"
                          .format(source.path, source.path))
-    # A repository's hooks go only into the repository's own settings, naming `.shared` from its root.
+    # A repository's hooks go only into the repository's own settings, naming `.shared` from its git root.
     repo_declared = []
     if repo:
-        repo_hooks = repo.hooks(agent_names, root=".shared")
+        repo_hooks = repo.hooks(agent_names, root=REPO_HOOK_ROOT)
         if record.approved(repo):
             repo_declared = [(repo,) + hook for hook in repo_hooks]
         elif repo_hooks:

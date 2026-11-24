@@ -65,7 +65,7 @@ hookはClaude Codeのhookの形で1回だけ宣言し、エージェントの表
 
 | 欄 | 意味 |
 |---|---|
-| `command` | エージェントが動かすシェルの命令。`${CLAUDE_PLUGIN_ROOT}`は配る元のpathに、リポジトリの中では`.shared`に置き換える |
+| `command` | エージェントが動かすシェルの命令。`${CLAUDE_PLUGIN_ROOT}`は配る元のpathに、リポジトリの中では`"$(git rev-parse --show-toplevel 2>/dev/null \|\| pwd)"/.shared`に置き換え、リポジトリのどのフォルダーからでも`.shared`を見つけられるようにする |
 | `timeout` | 秒。Claude Codeと同じ読み方 |
 | `tools` | エージェントの名前の一覧 (無くてよい)。そのエージェントにだけhookを置き、この欄そのものは書かない |
 
@@ -160,7 +160,7 @@ hookは命令を動かすので、道具は利用者が1度認めた配る元の
 |---|---|
 | スキル | 各行の`repo_skills`に、スキルごとの相対のリンク |
 | ルール | 各行の`repo_rules`の1つの囲み。公開した表では`AGENTS.md` |
-| hook | 各行の`repo_hooks`。`${CLAUDE_PLUGIN_ROOT}`は`.shared`に置き換える |
+| hook | 各行の`repo_hooks`。`${CLAUDE_PLUGIN_ROOT}`は`"$(git rev-parse --show-toplevel 2>/dev/null \|\| pwd)"/.shared`に置き換える |
 
 Codexは、利用者がCodexの中で信頼したリポジトリのhookだけを動かすので、実行の出力でCodexの`/hooks`を開くよう案内します。
 
