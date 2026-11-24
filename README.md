@@ -9,7 +9,8 @@ English · [日本語](README.ja.md)
 </div>
 
 `agent-shared` places the skills, rules, and hooks you keep in one folder into every coding agent on your computer.
-Skills and rules are links to the one copy in that folder, so an edit reaches every agent at once.
+Skills, and Claude Code's rules, are links to the one copy in that folder, so an edit reaches them at once.
+Codex and GitHub Copilot CLI read each rule as a copy inside their own instructions file, so an edit to a rule reaches them on the next `agent-shared deploy`.
 Your folder stays on your computer, and the command sends nothing over the network.
 How a source folder is placed into each agent is written as an open definition, [spec/agent-shared.md](spec/agent-shared.md), so other tools can place the same items.
 

@@ -1235,6 +1235,36 @@ remove_repo_folders() {
   [ -z "$empty" ] || { why="remove left empty folders in the repository: $empty"; return 1; }
 }
 
+# Removing ~/.shared keeps the folders right under the home folder even when they are left empty,
+# while the emptied folders inside them still go (#29). The home folder is no repository.
+remove_home_source() {
+  fresh remove-home
+  find "$HOME/.claude" "$HOME/.codex" -mindepth 1 -delete
+  mkdir -p "$HOME/.copilot"
+  copilot_installed
+  run deploy
+  [ "$rc" = 0 ] || { why="deploy exited $rc: $(tail -1 "$T/out")"; return 1; }
+  [ -L "$HOME/.claude/skills/alpha" ] && [ -L "$HOME/.agents/skills/alpha" ] || { why="~/.shared was not placed before removing it"; return 1; }
+  run remove --source "$HOME/.shared"
+  [ "$rc" = 0 ] || { why="remove exited $rc: $(tail -1 "$T/out")"; return 1; }
+  local folder
+  for folder in .claude .codex .copilot .agents; do
+    [ -d "$HOME/$folder" ] || { why="remove took out ~/$folder, a folder right under the home folder"; return 1; }
+  done
+  [ ! -e "$HOME/.claude/skills" ] && [ ! -e "$HOME/.agents/skills" ] || { why="remove left the emptied skills folders"; return 1; }
+  [ -d "$HOME/.shared/skills/alpha" ] || { why="remove touched the source folder"; return 1; }
+}
+
+# The READMEs say which agents see an edit at once (links) and which see it on the next deploy (copies) (#29).
+readmes_edit_reach() {
+  grep -qF 'an edit to a rule reaches them on the next `agent-shared deploy`' "$ROOT/README.md" \
+    && ! grep -qF 'an edit reaches every agent at once' "$ROOT/README.md" \
+    || { why="README.md does not say that Codex and Copilot CLI see a rule edit on the next deploy"; return 1; }
+  grep -qF 'ルールの直しは次の`agent-shared deploy`で届きます' "$ROOT/README.ja.md" \
+    && ! grep -qF '全てのエージェントに一度に届きます' "$ROOT/README.ja.md" \
+    || { why="README.ja.md does not say that Codex and Copilot CLI see a rule edit on the next deploy"; return 1; }
+}
+
 # A folder that still holds the person's file stays when agent-shared takes its own file out of it.
 person_file_folder() {
   fresh person-folder
@@ -1828,6 +1858,8 @@ check "the definition and the READMEs name needs_command for Copilot CLI" defini
 check "a removed hook file takes its emptied folder with it" emptied_hooks_folder
 check "taking out the last skill link removes its emptied folder" emptied_skill_folder
 check "remove leaves no empty folder in the repository" remove_repo_folders
+check "removing ~/.shared keeps the folders right under the home folder" remove_home_source
+check "the READMEs say which agents see an edit at once and which on the next deploy" readmes_edit_reach
 check "a folder holding the person's file stays" person_file_folder
 check "the definition and the READMEs say emptied folders are removed" definition_emptied_folders
 check "deploy writes nothing for an agent older than its checked versions" version_older

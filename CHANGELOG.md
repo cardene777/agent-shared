@@ -7,6 +7,8 @@ Versions follow semantic versioning, and each release is tagged `v<version>`.
 
 - Two proposals to Agent Plugins, in `docs/proposals/`: rules as a portable plugin component, and the hook events each client version supports with a report of every hook a client does not run, posted as Discussions agentplugins/agent-plugins-spec#100 and #101
 - The definition's relation section names the portable hooks of Agent Plugins v1.1 and the two proposals
+- `remove --source ~/.shared` keeps the folders right under the home folder, such as `~/.claude` and `~/.codex`, when they are left empty, as the definition says; before, it took `~/.shared` for a repository's `.shared` and removed them
+- The READMEs say that skills and Claude Code's rules are links an edit reaches at once, and that Codex and GitHub Copilot CLI see a rule edit on the next deploy
 
 ## [0.2.3] - 2026-11-23
 
