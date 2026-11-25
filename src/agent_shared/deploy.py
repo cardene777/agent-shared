@@ -51,6 +51,8 @@ REPO_HOOK_ROOT = '"$(git rev-parse --show-toplevel 2>/dev/null || pwd)"/.shared'
 # `hooks/a.sh.orig` or in `other/hooks/a.sh`.
 PATH_CHARACTER = r"[\w./-]"
 CODEX_TIMEOUT = 30
+# Registering a marketplace clones it, so a codex plugin command gets longer than one app-server answer.
+PLUGIN_COMMAND_TIMEOUT = 600
 RULE_FORMS = ("link", "block")
 TRUST_KINDS = ("codex-app-server",)
 PLUGIN_KINDS = ("claude", "codex")
@@ -282,6 +284,46 @@ def codex_plugin_skills(warnings):
             for skill in skill_names(os.path.join(base, version, "skills")):
                 found.setdefault(skill, key)
     return found
+
+
+PLUGIN_LIST = "plugins.json"
+
+
+def plugin_list(path):
+    """Reads the plugin list `plugins.json` at `path`: the Codex plugins whose hooks the person trusts, and the git
+    URL of each of their marketplaces. Returns ({"marketplaces": {name: url}, "plugins": [id]}, problems), with
+    each problem written as `<entry>: <problem>` and the list None when there is a problem."""
+    try:
+        data = read_json(path, "the plugin list")
+    except Usage as error:
+        return None, ["{}".format(error)]
+    if not isinstance(data, dict):
+        return None, ["plugins: the file holds no JSON object"]
+    codex = data.get("codex", {})
+    if not isinstance(codex, dict):
+        return None, ["codex: holds no object of `marketplaces` and `plugins`"]
+    markets = codex.get("marketplaces", {})
+    plugins = codex.get("plugins", [])
+    problems = []
+    if not isinstance(markets, dict):
+        problems.append("codex.marketplaces: holds no object that maps a marketplace to its git URL")
+        markets = {}
+    for name, url in markets.items():
+        if not isinstance(url, str) or not url.strip():
+            problems.append("codex.marketplaces.{}: the marketplace {} has no git URL".format(name, name))
+    if not isinstance(plugins, list):
+        problems.append("codex.plugins: holds no list of plugins")
+        plugins = []
+    for index, plugin in enumerate(plugins):
+        name, at, market = plugin.partition("@") if isinstance(plugin, str) else ("", "", "")
+        if not (name and at and market) or "@" in market:
+            problems.append("codex.plugins[{}]: {} is not written as <plugin>@<marketplace>".format(index, plugin))
+        elif market not in markets:
+            problems.append("codex.plugins[{}]: the marketplace {} of {} is not in codex.marketplaces"
+                            .format(index, market, plugin))
+    if problems:
+        return None, problems
+    return {"marketplaces": dict(markets), "plugins": list(dict.fromkeys(plugins))}, []
 
 
 def state_folder():
@@ -607,40 +649,39 @@ class CodexServer:
             self.proc.kill()
 
 
-def trust_codex_hooks(place):
-    """Asks Codex to trust the hooks agent-shared placed in `place`, the way Codex's /hooks screen does.
-    Returns the number of keys changed, or None when there is no codex command."""
+def codex_command():
+    """The codex command to run, or None when it is not on PATH."""
     name = os.environ.get("AGENT_SHARED_CODEX_BIN", "codex")
-    command = shutil.which(name) if name else None
+    return shutil.which(name) if name else None
+
+
+def with_trusted(state, trusted):
+    """A copy of Codex's trust state with `trusted` ({key: hash}) written as the trusted hash of each key."""
+    wanted = {key: dict(entry) if isinstance(entry, dict) else entry for key, entry in state.items()}
+    for key, digest in trusted.items():
+        entry = wanted.get(key)
+        wanted[key] = dict(entry if isinstance(entry, dict) else {}, trusted_hash=digest)
+    return wanted
+
+
+def codex_trust(codex_home, choose):
+    """Asks `codex app-server` with the settings in `codex_home` for its hooks and its trust state, lets
+    `choose(hooks, state)` return the wanted state, and writes it the way Codex's /hooks screen does when it differs.
+    Returns the number of keys changed, or None when there is no codex command."""
+    command = codex_command()
     if command is None:
         return None
-    real = os.path.realpath(place)
-    server = CodexServer(command, os.path.dirname(place))
+    server = CodexServer(command, codex_home)
     try:
         server.call("initialize", {"clientInfo": {"name": "agent-shared", "version": "1"}})
         server.send({"method": "initialized"})
-        listed, marked = set(), {}
-        for group in server.call("hooks/list", {}).get("data") or []:
-            for hook in group.get("hooks") or []:
-                if hook.get("source") != "user" or hook.get("pluginId") or not hook.get("key"):
-                    continue
-                if os.path.realpath(hook.get("sourcePath") or "") != real:
-                    continue
-                listed.add(hook["key"])
-                if is_marked({"command": hook.get("command")}) and hook.get("currentHash"):
-                    marked[hook["key"]] = hook["currentHash"]
+        hooks = [hook for group in server.call("hooks/list", {}).get("data") or [] for hook in group.get("hooks") or []]
         layers = server.call("config/read", {"includeLayers": True}).get("layers") or []
         user = next((layer for layer in layers if (layer.get("name") or {}).get("type") == "user"), {})
         state = ((user.get("config") or {}).get("hooks") or {}).get("state") or {}
         if not isinstance(state, dict):
             raise TrustFailed("Codex's hooks.state is not a map of keys")
-        wanted = {key: dict(entry) if isinstance(entry, dict) else entry for key, entry in state.items()}
-        for key, digest in marked.items():
-            entry = wanted.get(key)
-            wanted[key] = dict(entry if isinstance(entry, dict) else {}, trusted_hash=digest)
-        for key in list(wanted):
-            if os.path.realpath(key.rsplit(":", 3)[0]) == real and key not in listed:
-                del wanted[key]
+        wanted = choose(hooks, state)
         if wanted == state:
             return 0
         params = {"edits": [{"keyPath": "hooks.state", "value": wanted, "mergeStrategy": "replace"}]}
@@ -652,6 +693,111 @@ def trust_codex_hooks(place):
         return sum(1 for key in set(wanted) | set(state) if wanted.get(key) != state.get(key))
     finally:
         server.close()
+
+
+def trust_codex_hooks(place):
+    """Asks Codex to trust the hooks agent-shared placed in `place` and to forget the trust of hooks no longer there.
+    Returns the number of keys changed, or None when there is no codex command."""
+    real = os.path.realpath(place)
+
+    def choose(hooks, state):
+        listed, marked = set(), {}
+        for hook in hooks:
+            if hook.get("source") != "user" or hook.get("pluginId") or not hook.get("key"):
+                continue
+            if os.path.realpath(hook.get("sourcePath") or "") != real:
+                continue
+            listed.add(hook["key"])
+            if is_marked({"command": hook.get("command")}) and hook.get("currentHash"):
+                marked[hook["key"]] = hook["currentHash"]
+        wanted = with_trusted(state, marked)
+        for key in list(wanted):
+            if os.path.realpath(key.rsplit(":", 3)[0]) == real and key not in listed:
+                del wanted[key]
+        return wanted
+
+    return codex_trust(os.path.dirname(place), choose)
+
+
+def trust_codex_plugin_hooks(plugin_ids):
+    """Asks Codex to trust every hook of the installed plugins in `plugin_ids` for its current command. The trust of
+    every other hook stays as it is. Returns the number of keys changed, or None when there is no codex command."""
+    def choose(hooks, state):
+        current = {hook["key"]: hook["currentHash"] for hook in hooks
+                   if hook.get("pluginId") in plugin_ids and hook.get("key") and hook.get("currentHash")}
+        return with_trusted(state, current)
+
+    return codex_trust(os.path.join(home(), ".codex"), choose)
+
+
+def run_codex(command, args):
+    """Runs `codex <args>` with the settings in ~/.codex. Returns None when it worked, or the reason it did not."""
+    env = dict(os.environ, CODEX_HOME=os.path.join(home(), ".codex"))
+    try:
+        done = subprocess.run([command] + args, stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env,
+                              timeout=PLUGIN_COMMAND_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "it did not end in {} seconds".format(PLUGIN_COMMAND_TIMEOUT)
+    except OSError as error:
+        return "{}".format(error.strerror or error)
+    if done.returncode == 0:
+        return None
+    said = (done.stderr or done.stdout or "").strip().splitlines()
+    return "it exited {}{}".format(done.returncode, ": " + said[0] if said else "")
+
+
+def ensure_codex_plugins(listing, notes, warnings):
+    """Registers the missing marketplaces of the plugin list in Codex, installs its plugins Codex does not have, and
+    trusts every hook of its plugins for the current command. A plugin already installed is left as it is."""
+    plugins = listing["plugins"]
+    if not plugins:
+        return
+    named = ", ".join(plugins)
+    command = codex_command()
+    if command is None:
+        warnings.append("Codex was not found, so the plugins {} are not installed or trusted yet. Install each with "
+                        "`codex plugin add <plugin>@<marketplace>`, then open /hooks in Codex and trust their hooks."
+                        .format(named))
+        return
+    codex_home = os.path.join(home(), ".codex")
+    config = os.path.join(codex_home, "config.toml")
+    try:
+        with open(config, "rb") as handle:
+            registered = set((tomllib.load(handle).get("marketplaces") or {}))
+    except FileNotFoundError:
+        registered = set()
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        warnings.append("{} cannot be read ({}), so the plugins {} were not installed or trusted"
+                        .format(shown(config), error, named))
+        return
+    failed = set()
+    for market in sorted({plugin.partition("@")[2] for plugin in plugins} - registered):
+        url = listing["marketplaces"][market]
+        reason = run_codex(command, ["plugin", "marketplace", "add", url])
+        if reason:
+            failed.add(market)
+            warnings.append("the Codex marketplace {} could not be registered from {} ({}); run "
+                            "`codex plugin marketplace add {}`".format(market, url, reason, url))
+        else:
+            notes.append("registered the Codex marketplace {} from {}".format(market, url))
+    for plugin in plugins:
+        name, _, market = plugin.partition("@")
+        if market in failed or os.path.isdir(os.path.join(codex_home, "plugins", "cache", market, name)):
+            continue
+        reason = run_codex(command, ["plugin", "add", plugin])
+        if reason:
+            warnings.append("the Codex plugin {} could not be installed ({}); run `codex plugin add {}`"
+                            .format(plugin, reason, plugin))
+        else:
+            notes.append("installed the Codex plugin {}".format(plugin))
+    try:
+        changed = trust_codex_plugin_hooks(set(plugins))
+    except TrustFailed as error:
+        warnings.append("Codex's trust for the hooks of the plugins {} was not written ({}). Open /hooks in Codex "
+                        "and trust their hooks.".format(named, error))
+        return
+    if changed:
+        notes.append("wrote Codex's trust for the hooks of the plugins {}".format(named))
 
 
 def existing_source(path):
@@ -897,6 +1043,21 @@ def deploy(extra_sources, repo_argument):
     run_ids = {source.id for source in run}
     refusals, warnings, notes = [], [], []
 
+    # Trusting a hook lets it run any command on the machine, so only the person's own source names the Codex
+    # plugins to install and trust, and a plugin list in another source is not read (#37).
+    main_path = os.path.realpath(os.path.join(home(), ".shared"))
+    listing = None
+    for source in run:
+        list_path = os.path.join(source.path, PLUGIN_LIST)
+        if not os.path.isfile(list_path):
+            continue
+        if os.path.realpath(source.path) != main_path:
+            warnings.append("{} was not read: only ~/.shared/plugins.json names the Codex plugins to install and trust"
+                            .format(shown(list_path)))
+            continue
+        listing, problems = plugin_list(list_path)
+        refusals += ["{}: {}".format(shown(list_path), problem) for problem in problems]
+
     skills, rules, declared = {}, {}, []
     for source in sources:
         for kind, found, items in (("skill", skills, source.skills()), ("rule", rules, source.rules())):
@@ -1097,6 +1258,8 @@ def deploy(extra_sources, repo_argument):
     for place in sorted(trust_by_hand & set(hooks_text)):
         warnings.append("Codex runs a repository's hooks only after you trust them: open /hooks in Codex once "
                         "and trust the hooks in {}.".format(shown(place)))
+    if listing and any(row.get("plugins") == "codex" and row["name"] in written_agents for row in table):
+        ensure_codex_plugins(listing, notes, warnings)
 
     for line in notes:
         print(line)
@@ -1327,6 +1490,10 @@ def check(source_path):
                     unknown = sorted(set(hook.get("tools") or []) - agent_names) if isinstance(hook.get("tools"), list) else []
                     if unknown:
                         problems.append("{}: {}: tools names agents not in the table: {}".format(hooks_path, entry, ", ".join(unknown)))
+
+    list_path = os.path.join(source.path, PLUGIN_LIST)
+    if os.path.isfile(list_path):
+        problems += ["{}: {}".format(list_path, problem) for problem in plugin_list(list_path)[1]]
 
     for name, folder in source.skills().items():
         skill_file = os.path.join(folder, "SKILL.md")
