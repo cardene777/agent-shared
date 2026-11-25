@@ -146,6 +146,26 @@ agent-shared deploy --source ~/apps/my-tool/.shared
 Claude CodeかCodexに入れたプラグインが、フォルダーのスキルと同じ名前のスキルを持つ時は、コマンドはそのエージェントへそのスキルを配らず、スキルとプラグインの名前を出します。
 エージェントの一覧には各スキルが1回だけ並び、入れたプラグインはそのまま働きます。
 
+## hookを信頼するCodexのプラグイン
+
+Codexは、プラグインのhookを`/hooks`であなたが信頼するまで動かさず、更新でhookが変わるとその信頼を外します。
+hookを信頼するCodexのプラグインを、各プラグインのマーケットプレイスのgitのURLと一緒に`~/.shared/plugins.json`へ書きます。
+
+```json
+{
+  "codex": {
+    "marketplaces": {"my-market": "https://github.com/<owner>/<repo>.git"},
+    "plugins": ["my-guards@my-market"]
+  }
+}
+```
+
+deployは毎回、Codexに無いマーケットプレイスを`codex plugin marketplace add`で登録し、Codexに無いプラグインを`codex plugin add`で入れ、書いたプラグインの全てのhookに今の命令でCodexの信頼の印を書きます。
+更新で変わったhookは、`/hooks`を開かなくても次のdeployでもう一度信頼されます。
+hookを信頼するとそのhookはどんな命令も動かせるので、読むのは`~/.shared/plugins.json`だけです。他の配る元やリポジトリの`.shared`にある`plugins.json`は読まず、実行の出力で名指します。
+一覧から外したプラグインは入ったまま信頼も残ります。消す時は`codex plugin remove <plugin>@<marketplace>`を実行します。
+`codex`のコマンドが無い時は、入れられなかったプラグインと信頼できなかったプラグインを実行の出力で名指します。
+
 ## 読む物と書く物と残す物
 
 | 種類 | 場所 |
@@ -153,8 +173,8 @@ Claude CodeかCodexに入れたプラグインが、フォルダーのスキル�
 | 読む物 | 配る元のフォルダー、`~/.claude/plugins/installed_plugins.json`、`~/.claude/settings.json`の`enabledPlugins`、`~/.codex/config.toml`、`~/.codex/plugins/cache`の下のスキルのフォルダー。`placed`は記録とエージェントの表の置き場だけを読む |
 | 書く物 | エージェントの表の置き場。自分が置いた物だけ |
 | 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧で、`agent-shared remove`は外した配る元の項目をそこから消す。`AGENT_SHARED_STATE`でフォルダーを変えられる |
-| 動かす物 | `codex app-server`。置いたhookにCodexの信頼の印を書くため。`AGENT_SHARED_CODEX_BIN`で別の`codex`のコマンドを指せる |
-| 送る物 | ネットワークには何も送らない |
+| 動かす物 | `codex app-server`。置いたhookと、`~/.shared/plugins.json`が書くプラグインのhookにCodexの信頼の印を書くため。Codexにまだ無いマーケットプレイスとプラグインのために`codex plugin marketplace add`と`codex plugin add`。`AGENT_SHARED_CODEX_BIN`で別の`codex`のコマンドを指せる |
+| 送る物 | 自分では何も送らない。`codex plugin marketplace add`と`codex plugin add`が、`~/.shared/plugins.json`が書くマーケットプレイスとプラグインを取ってくる |
 
 ## 自分が置いた物の見分け方
 

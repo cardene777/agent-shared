@@ -144,6 +144,26 @@ agent-shared deploy --source ~/apps/my-tool/.shared
 When a plugin installed in Claude Code or Codex has a skill with the same name as one in your folder, the command does not place that skill for that agent and prints the skill and the plugin.
 The agent lists each skill once, and the plugin you chose to install keeps working.
 
+## Codex plugins whose hooks you trust
+
+Codex runs a plugin's hooks only after you trust them in `/hooks`, and it drops that trust when an update changes a hook.
+Name the Codex plugins whose hooks you trust in `~/.shared/plugins.json`, with the git URL of each plugin's marketplace.
+
+```json
+{
+  "codex": {
+    "marketplaces": {"my-market": "https://github.com/<owner>/<repo>.git"},
+    "plugins": ["my-guards@my-market"]
+  }
+}
+```
+
+Each deploy registers a marketplace Codex does not have with `codex plugin marketplace add`, installs a named plugin Codex does not have with `codex plugin add`, and writes Codex's trust for every hook of each named plugin for its current command.
+A hook an update changed is trusted again on the next deploy, without opening `/hooks`.
+Only `~/.shared/plugins.json` is read, because trusting a hook lets it run any command; a `plugins.json` in another source folder or in a repository's `.shared` is not read, and the run names it.
+A plugin you take off the list stays installed and keeps its trust; remove it with `codex plugin remove <plugin>@<marketplace>`.
+Without the `codex` command, the run names the plugins it could not install or trust.
+
 ## What it reads, writes, and keeps
 
 | Kind | Paths |
@@ -151,8 +171,8 @@ The agent lists each skill once, and the plugin you chose to install keeps worki
 | Reads | The source folders, `~/.claude/plugins/installed_plugins.json`, `enabledPlugins` in `~/.claude/settings.json`, `~/.codex/config.toml`, and the skill folders under `~/.codex/plugins/cache`. `placed` reads only the record and the places in the agent table |
 | Writes | The places in the agent table, only for what it placed itself |
 | Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link it placed and each source you approved, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write and that `agent-shared remove` drops the removed source's entries from. `AGENT_SHARED_STATE` moves the folder |
-| Runs | `codex app-server`, to write Codex's trust for the hooks it placed. `AGENT_SHARED_CODEX_BIN` names another `codex` command |
-| Sends | Nothing over the network |
+| Runs | `codex app-server`, to write Codex's trust for the hooks it placed and for the hooks of the plugins `~/.shared/plugins.json` names, and `codex plugin marketplace add` and `codex plugin add` for the marketplaces and plugins Codex does not have yet. `AGENT_SHARED_CODEX_BIN` names another `codex` command |
+| Sends | Nothing itself. `codex plugin marketplace add` and `codex plugin add` fetch the marketplaces and plugins that `~/.shared/plugins.json` names |
 
 ## How it tells its own entries apart
 

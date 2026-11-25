@@ -152,6 +152,20 @@ hookは命令を動かすので、道具は利用者が1度認めた配る元の
 - Codexのようなエージェント自身の信頼の印は、置いたhookにだけ書く。
 - 道具が認める手続きを持つ前から記録にあった配る元は、認めた扱い。
 
+## Codexのプラグイン
+
+`~/.shared/plugins.json`は、利用者がhookを信頼するCodexのプラグインを書きます。
+
+| 欄 | 意味 |
+|---|---|
+| `codex.marketplaces` | マーケットプレイスの名前ごとに、Codexがそれを取ってくるgitのURL |
+| `codex.plugins` | プラグイン。`codex.marketplaces`のマーケットプレイスを使い、それぞれ`<plugin>@<marketplace>`と書く |
+
+- hookを信頼するとそのhookはどんな命令も動かせるので、道具は利用者自身の配る元である`~/.shared/plugins.json`だけを読む。他の配る元やリポジトリの`.shared`にある`plugins.json`は読まず、実行の出力で名指す。
+- 実行のたびに、Codexに無いマーケットプレイスを登録し、Codexに無いプラグインを入れ、書いたプラグインの全てのhookに今の命令でCodexの信頼の印を書く。更新で変わったhookももう一度信頼される。
+- 一覧から外したプラグインは入ったまま信頼も残る。`codex plugin remove <plugin>@<marketplace>`で消す。
+- `agent-shared check`は、一番上がオブジェクトでない`plugins.json`、`<plugin>@<marketplace>`と書いていないプラグイン、マーケットプレイスが一覧に無いプラグイン、gitのURLが無いマーケットプレイスを断る。
+
 ## リポジトリへ置く
 
 リポジトリの`.shared`はリポジトリ自身の中へ置くので、どのクローンにも同じ物が入ります。
