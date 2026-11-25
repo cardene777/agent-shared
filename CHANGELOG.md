@@ -3,6 +3,13 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
+## [0.3.0] - 2026-11-25
+
+- `~/.shared/plugins.json` names the Codex plugins whose hooks you trust, with the git URL of each marketplace. Each deploy registers a marketplace Codex does not have, installs a named plugin Codex does not have, and writes Codex's trust for every hook of each named plugin for its current command, so a hook an update changed is trusted again without opening `/hooks` (#37)
+- Only `~/.shared/plugins.json` is read; a `plugins.json` in another source folder or a repository's `.shared` is named in a warning, and `agent-shared check` refuses a `plugins.json` of the wrong shape (#37)
+- A repository's hooks run from any folder of the repository: the hook command names its script from the repository's git root, for Claude Code, Codex, and GitHub Copilot CLI (#35)
+- The READMEs say that `agent-shared remove` also drops the removed source's entries from `off.json` (#33)
+
 ## [0.2.4] - 2026-11-24
 
 - Two proposals to Agent Plugins, in `docs/proposals/`: rules as a portable plugin component, and the hook events each client version supports with a report of every hook a client does not run, posted as Discussions agentplugins/agent-plugins-spec#100 and #101
