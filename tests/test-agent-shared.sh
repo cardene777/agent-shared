@@ -21,20 +21,55 @@ ok() { PASS=$((PASS + 1)); printf 'ok    %s\n' "$1"; }
 ng() { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n' "$1"; [ -n "$why" ] && printf '      %s\n' "$why"; }
 check() { why=""; if "$2"; then ok "$1"; else ng "$1"; fi; }
 
-# The stand-in for `codex app-server`: lists the hooks in $CODEX_HOME/hooks.json with a hash of each
-# command, reports an empty trust state, accepts every write, and logs each message to $STUB_LOG.
+# The stand-in for `codex app-server`: lists the hooks in $CODEX_HOME/hooks.json and the hooks of the
+# plugins installed under $CODEX_HOME/plugins/cache with a hash of each command, reports an empty trust
+# state (or the one kept in $STUB_STATE), accepts every write, and logs each message to $STUB_LOG.
+# `codex plugin marketplace add <folder>` and `codex plugin add <plugin>@<marketplace>` work on a
+# throwaway marketplace folder (see plugin_market) and log their arguments to $STUB_LOG.
 mkdir -p "$T/bin"
 cat > "$T/bin/codex" <<'PY'
 #!/usr/bin/env python3
 import hashlib
 import json
 import os
+import shutil
 import sys
+import tomllib
 
-if sys.argv[1:] != ["app-server"]:
-    sys.exit(2)
 home = os.environ["CODEX_HOME"]
 log = os.environ.get("STUB_LOG")
+state_file = os.environ.get("STUB_STATE")
+config = os.path.join(home, "config.toml")
+
+
+def append_config(text):
+    with open(config, "a") as handle:
+        handle.write(text)
+
+
+if sys.argv[1:2] == ["plugin"]:
+    if log:
+        with open(log, "a") as handle:
+            handle.write(json.dumps({"argv": sys.argv[1:]}) + "\n")
+    args = sys.argv[2:]
+    if args[:2] == ["marketplace", "add"] and len(args) == 3:
+        name = open(os.path.join(args[2], "name")).read().strip()
+        append_config('\n[marketplaces.%s]\nsource_type = "local"\nsource = "%s"\n' % (name, args[2]))
+        sys.exit(0)
+    if args[:1] == ["add"] and len(args) == 2 and "@" in args[1]:
+        plugin, market = args[1].split("@", 1)
+        data = tomllib.load(open(config, "rb")) if os.path.exists(config) else {}
+        source = ((data.get("marketplaces") or {}).get(market) or {}).get("source")
+        if not source:
+            print("marketplace %s is not configured" % market, file=sys.stderr)
+            sys.exit(1)
+        shutil.copytree(os.path.join(source, "plugins", plugin),
+                        os.path.join(home, "plugins", "cache", market, plugin, "1.0.0"))
+        append_config('\n[plugins."%s"]\nenabled = true\n' % args[1])
+        sys.exit(0)
+    sys.exit(2)
+if sys.argv[1:] != ["app-server"]:
+    sys.exit(2)
 
 
 def reply(request_id, result):
@@ -63,10 +98,30 @@ for line in sys.stdin:
                         "key": "%s:%s:%d:%d" % (place, event, group_index, hook_index),
                         "currentHash": "sha256:" + hashlib.sha256(command.encode()).hexdigest(),
                     })
+        cache = os.path.join(home, "plugins", "cache")
+        for market in sorted(os.listdir(cache)) if os.path.isdir(cache) else []:
+            for plugin in sorted(os.listdir(os.path.join(cache, market))):
+                for version in sorted(os.listdir(os.path.join(cache, market, plugin))):
+                    place = os.path.join(cache, market, plugin, version, "hooks", "hooks.json")
+                    if not os.path.exists(place):
+                        continue
+                    plugin_id = "%s@%s" % (plugin, market)
+                    for event, groups in (json.load(open(place)).get("hooks") or {}).items():
+                        for group_index, group in enumerate(groups):
+                            for hook_index, hook in enumerate(group.get("hooks") or []):
+                                command = hook.get("command", "")
+                                hooks.append({
+                                    "source": "plugin", "pluginId": plugin_id, "sourcePath": place, "command": command,
+                                    "key": "%s:hooks/hooks.json:%s:%d:%d" % (plugin_id, event, group_index, hook_index),
+                                    "currentHash": "sha256:" + hashlib.sha256(command.encode()).hexdigest(),
+                                })
         reply(request_id, {"data": [{"hooks": hooks}]})
     elif method == "config/read":
-        reply(request_id, {"layers": [{"name": {"type": "user"}, "config": {"hooks": {"state": {}}}, "version": "v1"}]})
+        state = json.load(open(state_file)) if state_file and os.path.exists(state_file) else {}
+        reply(request_id, {"layers": [{"name": {"type": "user"}, "config": {"hooks": {"state": state}}, "version": "v1"}]})
     elif method == "config/batchWrite":
+        if state_file:
+            json.dump(message["params"]["edits"][0]["value"], open(state_file, "w"))
         reply(request_id, {"status": "ok"})
     else:
         reply(request_id, {})
@@ -81,7 +136,7 @@ fresh() {
   export HOME="$T/home-$1"
   export AGENT_SHARED_CODEX_BIN="$T/bin/codex"
   export STUB_LOG="$HOME/codex-calls.jsonl"
-  unset AGENT_SHARED_STATE
+  unset AGENT_SHARED_STATE STUB_STATE MARKET
   RUN_DIR="$HOME"
   mkdir -p "$HOME/.shared/skills/alpha" "$HOME/.shared/skills/beta" "$HOME/.shared/rules" "$HOME/.claude" "$HOME/.codex"
   printf -- '---\nname: alpha\ndescription: Alpha.\n---\nAlpha.\n' > "$HOME/.shared/skills/alpha/SKILL.md"
@@ -266,6 +321,230 @@ without_codex() {
   deployed || return 1
   grep -q '/hooks' "$T/out" || { why="the run did not say how to trust the hooks in Codex"; return 1; }
   [ -L "$HOME/.claude/skills/alpha" ] || { why="the other agents were not deployed"; return 1; }
+}
+
+# A throwaway marketplace named `market` for the stand-in codex, with the plugins guard-one (two hooks)
+# and other (one hook). The stand-in keeps Codex's trust state in $STUB_STATE.
+plugin_market() {
+  MARKET="$T/market-$1"
+  mkdir -p "$MARKET/plugins/guard-one/hooks" "$MARKET/plugins/other/hooks"
+  printf 'market\n' > "$MARKET/name"
+  cat > "$MARKET/plugins/guard-one/hooks/hooks.json" <<'JSON'
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash guard-a.sh"}, {"type": "command", "command": "bash guard-b.sh"}]}]}}
+JSON
+  cat > "$MARKET/plugins/other/hooks/hooks.json" <<'JSON'
+{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "bash other.sh"}]}]}}
+JSON
+  export STUB_STATE="$HOME/codex-state.json"
+}
+
+# Writes plugins.json into the folder $1, naming the plugins after it from the marketplace above.
+plugins_json() {
+  local folder="$1"
+  shift
+  python3 - "$folder/plugins.json" "$MARKET" "$@" <<'PY'
+import json, sys
+path, market, plugins = sys.argv[1], sys.argv[2], sys.argv[3:]
+json.dump({"codex": {"marketplaces": {"market": market}, "plugins": plugins}}, open(path, "w"))
+PY
+}
+
+# Registers the marketplace in the throwaway Codex, as `codex plugin marketplace add` does.
+market_registered() {
+  printf '\n[marketplaces.market]\nsource_type = "local"\nsource = "%s"\n' "$MARKET" >> "$HOME/.codex/config.toml"
+}
+
+# Installs the plugin $1 of the marketplace in the throwaway Codex without agent-shared.
+plugin_installed() {
+  mkdir -p "$HOME/.codex/plugins/cache/market/$1"
+  cp -R "$MARKET/plugins/$1" "$HOME/.codex/plugins/cache/market/$1/1.0.0"
+  printf '\n[plugins."%s@market"]\nenabled = true\n' "$1" >> "$HOME/.codex/config.toml"
+}
+
+# The trusted hashes the stand-in keeps for the hooks of the plugin $1, as sorted "key hash" lines.
+trusted_of() {
+  python3 - "${STUB_STATE:-}" "$1@market" <<'PY' | LC_ALL=C sort
+import json, os, sys
+path, plugin = sys.argv[1:]
+state = json.load(open(path)) if path and os.path.exists(path) else {}
+for key, entry in state.items():
+    if key.startswith(plugin + ":") and isinstance(entry, dict) and entry.get("trusted_hash"):
+        print(key, entry["trusted_hash"])
+PY
+}
+
+# The current hashes of the hooks of the installed plugin $1, as sorted "key hash" lines.
+current_of() {
+  python3 - "$HOME/.codex/plugins/cache/market/$1/1.0.0/hooks/hooks.json" "$1@market" <<'PY' | LC_ALL=C sort
+import hashlib, json, sys
+path, plugin = sys.argv[1:]
+for event, groups in json.load(open(path))["hooks"].items():
+    for gi, group in enumerate(groups):
+        for hi, hook in enumerate(group["hooks"]):
+            print("%s:hooks/hooks.json:%s:%d:%d sha256:%s" % (plugin, event, gi, hi, hashlib.sha256(hook["command"].encode()).hexdigest()))
+PY
+}
+
+# True when the stand-in codex was run with exactly the arguments given.
+codex_ran() {
+  python3 - "$STUB_LOG" "$@" <<'PY'
+import json, os, sys
+log, wanted = sys.argv[1], sys.argv[2:]
+lines = [json.loads(l) for l in open(log)] if os.path.exists(log) else []
+sys.exit(0 if any(m.get("argv") == wanted for m in lines) else 1)
+PY
+}
+
+installs_named_plugins() {
+  fresh plugin-install
+  plugin_market install
+  market_registered
+  plugins_json "$HOME/.shared" guard-one@market
+  deployed || return 1
+  codex_ran plugin add guard-one@market || { why="deploy did not run codex plugin add guard-one@market"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/guard-one" ] || { why="guard-one is not installed in Codex"; return 1; }
+  [ ! -e "$HOME/.codex/plugins/cache/market/other" ] || { why="other was installed although plugins.json does not name it"; return 1; }
+}
+
+registers_missing_market() {
+  fresh plugin-market
+  plugin_market register
+  plugins_json "$HOME/.shared" guard-one@market
+  deployed || return 1
+  codex_ran plugin marketplace add "$MARKET" || { why="deploy did not register the marketplace from plugins.json"; return 1; }
+  python3 - "$STUB_LOG" <<'PY' || { why="the plugin was installed before its marketplace was registered"; return 1; }
+import json, sys
+argvs = [json.loads(l).get("argv") for l in open(sys.argv[1])]
+argvs = [a for a in argvs if a]
+first_market = next(i for i, a in enumerate(argvs) if a[:3] == ["plugin", "marketplace", "add"])
+first_add = next(i for i, a in enumerate(argvs) if a[:2] == ["plugin", "add"])
+sys.exit(0 if first_market < first_add else 1)
+PY
+  [ -d "$HOME/.codex/plugins/cache/market/guard-one" ] || { why="guard-one is not installed in Codex"; return 1; }
+}
+
+trusts_named_plugin_hooks() {
+  fresh plugin-trust
+  plugin_market trust
+  market_registered
+  plugin_installed guard-one
+  plugins_json "$HOME/.shared" guard-one@market
+  deployed || return 1
+  local trusted current
+  trusted="$(trusted_of guard-one)"
+  current="$(current_of guard-one)"
+  [ -n "$trusted" ] && [ "$trusted" = "$current" ] || { why="trusted [$trusted], current [$current]"; return 1; }
+}
+
+retrusts_changed_hook() {
+  fresh plugin-retrust
+  plugin_market retrust
+  market_registered
+  plugin_installed guard-one
+  plugins_json "$HOME/.shared" guard-one@market
+  deployed || return 1
+  local cached="$HOME/.codex/plugins/cache/market/guard-one/1.0.0/hooks/hooks.json"
+  python3 - "$cached" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = "bash guard-a-updated.sh"
+json.dump(data, open(path, "w"))
+PY
+  deployed || return 1
+  local trusted current
+  trusted="$(trusted_of guard-one)"
+  current="$(current_of guard-one)"
+  [ -n "$trusted" ] && [ "$trusted" = "$current" ] || { why="after the update, trusted [$trusted], current [$current]"; return 1; }
+}
+
+keeps_taken_off() {
+  fresh plugin-off
+  plugin_market off
+  market_registered
+  plugins_json "$HOME/.shared" guard-one@market
+  deployed || return 1
+  local before
+  before="$(trusted_of guard-one)"
+  [ -n "$before" ] || { why="the first deploy trusted no hook of guard-one"; return 1; }
+  plugins_json "$HOME/.shared"
+  deployed || return 1
+  [ -d "$HOME/.codex/plugins/cache/market/guard-one" ] || { why="guard-one was removed from Codex"; return 1; }
+  [ "$(trusted_of guard-one)" = "$before" ] || { why="the trust of guard-one changed after it left the list"; return 1; }
+  ! grep -qF '"remove"' "$STUB_LOG" || { why="deploy ran codex plugin remove"; return 1; }
+}
+
+# A plugins.json in a repository's .shared and in a --source folder is not read, and each is named.
+outside_plugins_not_read() {
+  fresh plugin-outside
+  plugin_market outside
+  market_registered
+  local repo="$T/repo-plugins" extra="$T/extra-plugins"
+  mkdir -p "$repo/.shared/skills/delta" "$extra/skills/epsilon"
+  git -C "$repo" init -q
+  printf -- '---\nname: delta\ndescription: Delta.\n---\nDelta.\n' > "$repo/.shared/skills/delta/SKILL.md"
+  printf -- '---\nname: epsilon\ndescription: Epsilon.\n---\nEpsilon.\n' > "$extra/skills/epsilon/SKILL.md"
+  plugins_json "$repo/.shared" guard-one@market
+  plugins_json "$extra" guard-one@market
+  RUN_DIR="$repo"
+  deployed || return 1
+  grep -qF "$repo/.shared/plugins.json" "$T/out" || { why="the run did not name the repository's plugins.json"; return 1; }
+  RUN_DIR="$HOME"
+  run deploy --source "$extra"
+  [ "$rc" = 0 ] || { why="deploy --source exited $rc: $(tail -1 "$T/out")"; return 1; }
+  grep -qF "$extra/plugins.json" "$T/out" || { why="the run did not name the --source folder's plugins.json"; return 1; }
+  [ ! -e "$HOME/.codex/plugins/cache/market/guard-one" ] || { why="guard-one was installed from a plugins.json outside ~/.shared"; return 1; }
+  [ -z "$(trusted_of guard-one)" ] || { why="guard-one's hooks were trusted from a plugins.json outside ~/.shared"; return 1; }
+}
+
+without_codex_names_plugins() {
+  fresh plugin-nocodex
+  plugin_market nocodex
+  plugins_json "$HOME/.shared" guard-one@market
+  export AGENT_SHARED_CODEX_BIN="$T/bin/no-such-codex"
+  deployed || return 1
+  grep -F 'guard-one@market' "$T/out" | grep -qF '/hooks' || { why="the run did not name guard-one@market with how to trust it"; return 1; }
+  [ -L "$HOME/.claude/skills/alpha" ] || { why="the other agents were not deployed"; return 1; }
+}
+
+# Each wrong plugins.json sits in a source of its own, so each refusal is seen.
+check_refuses_plugins() {
+  fresh check-plugins
+  local bad="$T/bad-plugins"
+  mkdir -p "$bad/list" "$bad/at" "$bad/url"
+  printf '[]\n' > "$bad/list/plugins.json"
+  printf '{"codex": {"marketplaces": {"market": "%s"}, "plugins": ["guard-one"]}}\n' "$T/market" > "$bad/at/plugins.json"
+  printf '{"codex": {"marketplaces": {"market": ""}, "plugins": ["guard-one@market"]}}\n' > "$bad/url/plugins.json"
+  check_run --source "$bad/list"
+  [ "$rc" = 1 ] && grep -qF 'plugins.json' "$T/check.out" \
+    || { why="a list that is not an object: check exited $rc: $(tail -1 "$T/check.out")"; return 1; }
+  check_run --source "$bad/at"
+  [ "$rc" = 1 ] && grep 'plugins.json' "$T/check.out" | grep -qF 'guard-one' \
+    || { why="a plugin without @: check exited $rc: $(tail -1 "$T/check.out")"; return 1; }
+  check_run --source "$bad/url"
+  [ "$rc" = 1 ] && grep 'plugins.json' "$T/check.out" | grep -qF 'market' \
+    || { why="a marketplace without a git URL: check exited $rc: $(tail -1 "$T/check.out")"; return 1; }
+}
+
+# The trust a deploy finds for a plugin plugins.json does not name stays as it was.
+leaves_unnamed_plugins() {
+  fresh plugin-unnamed
+  plugin_market unnamed
+  market_registered
+  plugin_installed other
+  printf '{"other@market:hooks/hooks.json:Stop:0:0": {"trusted_hash": "sha256:seeded"}}\n' > "$STUB_STATE"
+  plugins_json "$HOME/.shared" guard-one@market
+  deployed || return 1
+  [ "$(trusted_of other)" = "other@market:hooks/hooks.json:Stop:0:0 sha256:seeded" ] \
+    || { why="the trust of other changed: [$(trusted_of other)]"; return 1; }
+}
+
+definition_plugins_json() {
+  local f
+  for f in README.md README.ja.md spec/agent-shared.md spec/agent-shared.ja.md; do
+    grep -qF '~/.shared/plugins.json' "$ROOT/$f" || { why="$f does not name ~/.shared/plugins.json"; return 1; }
+    grep -qF 'codex plugin remove' "$ROOT/$f" || { why="$f does not say how a plugin taken off the list is removed"; return 1; }
+  done
 }
 
 repo_skills() {
@@ -1848,6 +2127,16 @@ check "deploy writes rules as links for Claude Code and one block for Codex" wri
 check "deploy adds marked hooks and keeps the other settings" adds_hooks
 check "deploy writes Codex trust for the hooks it placed" trusts_codex_hooks
 check "without codex the run prints how to trust hooks in Codex" without_codex
+check "deploy installs the Codex plugins plugins.json names" installs_named_plugins
+check "deploy registers a missing marketplace from plugins.json" registers_missing_market
+check "deploy trusts every hook of the named Codex plugins" trusts_named_plugin_hooks
+check "deploy trusts a named plugin's changed hook again" retrusts_changed_hook
+check "a plugin taken off plugins.json keeps its install and trust" keeps_taken_off
+check "a plugins.json outside ~/.shared is not read and is named in a warning" outside_plugins_not_read
+check "without codex the run names the plugins left untrusted" without_codex_names_plugins
+check "check refuses a plugins.json of the wrong shape" check_refuses_plugins
+check "deploy leaves the hooks of unnamed plugins untrusted" leaves_unnamed_plugins
+check "the definition and the READMEs describe plugins.json" definition_plugins_json
 check "deploy in a repository links its skills into its own folders" repo_skills
 check "a removed skill, rule, or hook is taken out on the next run" removes_taken_out
 check "entries without the mark are left unchanged" leaves_unmarked
