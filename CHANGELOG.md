@@ -5,6 +5,8 @@ Versions follow semantic versioning, and each release is tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-27
+
 - A rule with frontmatter that scopes it (`paths:`, `globs:`, `applyTo:`, `alwaysApply:`, or `description:`) goes into Codex's and GitHub Copilot CLI's block without its frontmatter, under one quoted line that says where it applies; Claude Code gets a copy rewritten to `paths:` for a rule scoped with `globs:` or `applyTo:`, and a copy that starts with that line for a rule scoped only by `description:`. A rule whose frontmatter is not closed is refused (#43)
 - A run that deploys `~/.shared` installs each plugin that `~/.codex/config.toml` enables with `enabled = true` and Codex does not have, since Codex does not install them on its own. It writes no trust for the hooks of those plugins, and names a plugin whose marketplace Codex has not registered with the commands to run (#45)
 
