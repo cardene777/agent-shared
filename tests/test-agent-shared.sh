@@ -544,6 +544,119 @@ leaves_unnamed_plugins() {
     || { why="the trust of other changed: [$(trusted_of other)]"; return 1; }
 }
 
+# Enables the plugin $1 of the marketplace in the throwaway Codex config without installing it. $2 is the value of
+# `enabled`, true when left out.
+plugin_enabled() {
+  printf '\n[plugins."%s@market"]\nenabled = %s\n' "$1" "${2:-true}" >> "$HOME/.codex/config.toml"
+}
+
+# A plugin the Codex config enables is installed although ~/.shared holds no plugins.json.
+installs_enabled_plugins() {
+  fresh enabled-install
+  plugin_market enabled-install
+  market_registered
+  plugin_enabled other
+  [ ! -e "$HOME/.shared/plugins.json" ] || { why="the fixture holds a plugins.json"; return 1; }
+  deployed || return 1
+  codex_ran plugin add other@market || { why="deploy did not run codex plugin add other@market"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/other" ] || { why="other is not installed in Codex"; return 1; }
+}
+
+# Next to a plugin Codex lacks, a plugin it already has is left as it is.
+skips_installed_enabled() {
+  fresh enabled-have
+  plugin_market enabled-have
+  market_registered
+  plugin_installed guard-one
+  plugin_enabled other
+  deployed || return 1
+  codex_ran plugin add other@market || { why="deploy did not run codex plugin add for other, which Codex lacks"; return 1; }
+  ! codex_ran plugin add guard-one@market || { why="deploy ran codex plugin add for guard-one, which Codex already has"; return 1; }
+}
+
+# Next to an enabled plugin, a plugin the config disables is not installed.
+skips_disabled_plugin() {
+  fresh enabled-off
+  plugin_market enabled-off
+  market_registered
+  plugin_enabled guard-one false
+  plugin_enabled other
+  deployed || return 1
+  [ -d "$HOME/.codex/plugins/cache/market/other" ] || { why="other, which the config enables, is not installed"; return 1; }
+  ! codex_ran plugin add guard-one@market || { why="deploy ran codex plugin add for guard-one, which the config disables"; return 1; }
+  [ ! -e "$HOME/.codex/plugins/cache/market/guard-one" ] || { why="guard-one was installed although the config disables it"; return 1; }
+}
+
+# The deploy trusts the hooks of the plugin plugins.json names, and none of the plugin only the config enables.
+no_trust_for_enabled_only() {
+  fresh enabled-trust
+  plugin_market enabled-trust
+  market_registered
+  plugin_enabled other
+  plugins_json "$HOME/.shared" guard-one@market
+  deployed || return 1
+  [ -d "$HOME/.codex/plugins/cache/market/other" ] || { why="other is not installed in Codex"; return 1; }
+  [ -n "$(trusted_of guard-one)" ] || { why="guard-one, which plugins.json names, was not trusted"; return 1; }
+  [ -z "$(trusted_of other)" ] || { why="the hooks of other were trusted although only the config enables it: [$(trusted_of other)]"; return 1; }
+}
+
+# A --source run installs the enabled plugin while ~/.shared exists, since every run includes ~/.shared, and
+# installs nothing on a machine without ~/.shared.
+no_install_without_main() {
+  local extra="$T/extra-enabled"
+  mkdir -p "$extra/skills/zeta"
+  printf -- '---\nname: zeta\ndescription: Zeta.\n---\nZeta.\n' > "$extra/skills/zeta/SKILL.md"
+  fresh enabled-main
+  plugin_market enabled-main
+  market_registered
+  plugin_enabled other
+  run deploy --source "$extra"
+  [ "$rc" = 0 ] || { why="deploy --source with ~/.shared exited $rc: $(tail -1 "$T/out")"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/other" ] || { why="a --source run with ~/.shared did not install other"; return 1; }
+  fresh enabled-nomain
+  plugin_market enabled-nomain
+  market_registered
+  plugin_enabled other
+  rm -rf "$HOME/.shared"
+  run deploy --source "$extra"
+  [ "$rc" = 0 ] || { why="deploy --source without ~/.shared exited $rc: $(tail -1 "$T/out")"; return 1; }
+  ! codex_ran plugin add other@market || { why="deploy ran codex plugin add without ~/.shared"; return 1; }
+  [ ! -e "$HOME/.codex/plugins/cache/market/other" ] || { why="other was installed without ~/.shared"; return 1; }
+}
+
+# An enabled plugin of a marketplace Codex lacks is named with the command to run, and the rest are installed.
+names_enabled_without_market() {
+  fresh enabled-market
+  plugin_market enabled-market
+  market_registered
+  plugin_enabled other
+  printf '\n[plugins."lonely@nowhere"]\nenabled = true\n' >> "$HOME/.codex/config.toml"
+  deployed || return 1
+  grep '^warning: ' "$T/out" | grep -F 'lonely@nowhere' | grep -qF 'codex plugin add lonely@nowhere' \
+    || { why="no warning named lonely@nowhere with the command to run"; return 1; }
+  ! codex_ran plugin add lonely@nowhere || { why="deploy ran codex plugin add for a plugin whose marketplace Codex lacks"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/other" ] || { why="other was not installed next to the plugin whose marketplace is missing"; return 1; }
+}
+
+# Without codex, the run names the enabled plugins it could not install and still writes the other agents.
+without_codex_names_enabled() {
+  fresh enabled-nocodex
+  plugin_market enabled-nocodex
+  plugin_enabled other
+  export AGENT_SHARED_CODEX_BIN="$T/bin/no-such-codex"
+  deployed || return 1
+  grep '^warning: ' "$T/out" | grep -qF 'other@market' || { why="no warning named other@market left uninstalled"; return 1; }
+  [ -L "$HOME/.claude/skills/alpha" ] || { why="the other agents were not deployed"; return 1; }
+}
+
+definition_enabled_plugins() {
+  local f
+  for f in README.md README.ja.md spec/agent-shared.md spec/agent-shared.ja.md; do
+    grep -qF '~/.codex/config.toml' "$ROOT/$f" || { why="$f does not name ~/.codex/config.toml"; return 1; }
+    grep -qF 'enabled = true' "$ROOT/$f" || { why="$f does not say which plugins of the Codex config deploy installs"; return 1; }
+  done
+}
+
 definition_plugins_json() {
   local f
   for f in README.md README.ja.md spec/agent-shared.md spec/agent-shared.ja.md; do
@@ -2312,6 +2425,14 @@ check "without codex the run names the plugins left untrusted" without_codex_nam
 check "check refuses a plugins.json of the wrong shape" check_refuses_plugins
 check "deploy leaves the hooks of unnamed plugins untrusted" leaves_unnamed_plugins
 check "the definition and the READMEs describe plugins.json" definition_plugins_json
+check "deploy installs the plugins the Codex config enables" installs_enabled_plugins
+check "deploy does not add an enabled plugin Codex already has" skips_installed_enabled
+check "deploy does not install a plugin the Codex config disables" skips_disabled_plugin
+check "deploy trusts no hook of a plugin only the Codex config enables" no_trust_for_enabled_only
+check "a deploy without ~/.shared installs no enabled plugin" no_install_without_main
+check "deploy names an enabled plugin whose marketplace Codex lacks and installs the rest" names_enabled_without_market
+check "without codex the run names the enabled plugins left uninstalled" without_codex_names_enabled
+check "the definition and the READMEs describe installing the enabled plugins" definition_enabled_plugins
 check "deploy in a repository links its skills into its own folders" repo_skills
 check "a removed skill, rule, or hook is taken out on the next run" removes_taken_out
 check "entries without the mark are left unchanged" leaves_unmarked

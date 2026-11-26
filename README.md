@@ -181,6 +181,13 @@ Only `~/.shared/plugins.json` is read, because trusting a hook lets it run any c
 A plugin you take off the list stays installed and keeps its trust; remove it with `codex plugin remove <plugin>@<marketplace>`.
 Without the `codex` command, the run names the plugins it could not install or trust.
 
+### Plugins your Codex config enables
+
+Codex does not install a plugin that `~/.codex/config.toml` enables; it waits for `codex plugin add`.
+So a run that deploys `~/.shared` also installs, with `codex plugin add`, each plugin whose `[plugins."<plugin>@<marketplace>"]` table says `enabled = true` and that Codex does not have, also when `~/.shared` holds no `plugins.json`.
+It writes no trust for the hooks of those plugins; name a plugin in `plugins.json` to have its hooks trusted.
+A plugin whose marketplace Codex has not registered, and that `plugins.json` gives no git URL for, is named with the commands to run, and the other plugins are still installed.
+
 ## What it reads, writes, and keeps
 
 | Kind | Paths |
@@ -189,7 +196,7 @@ Without the `codex` command, the run names the plugins it could not install or t
 | Writes | The places in the agent table, only for what it placed itself |
 | Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link and rewritten rule copy it placed and each source you approved, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write and that `agent-shared remove` drops the removed source's entries from. `AGENT_SHARED_STATE` moves the folder |
 | Runs | `codex app-server`, to write Codex's trust for the hooks it placed and for the hooks of the plugins `~/.shared/plugins.json` names, and `codex plugin marketplace add` and `codex plugin add` for the marketplaces and plugins Codex does not have yet. `AGENT_SHARED_CODEX_BIN` names another `codex` command |
-| Sends | Nothing itself. `codex plugin marketplace add` and `codex plugin add` fetch the marketplaces and plugins that `~/.shared/plugins.json` names |
+| Sends | Nothing itself. `codex plugin marketplace add` and `codex plugin add` fetch the marketplaces and plugins that `~/.shared/plugins.json` names and the plugins that `~/.codex/config.toml` enables |
 
 ## How it tells its own entries apart
 

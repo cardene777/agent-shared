@@ -865,33 +865,65 @@ def run_codex(command, args):
     return "it exited {}{}".format(done.returncode, ": " + said[0] if said else "")
 
 
+def enabled_codex_plugins(settings):
+    """The plugins Codex's settings enable: each `[plugins."<plugin>@<marketplace>"]` table with `enabled = true`,
+    in the order the file holds them."""
+    tables = settings.get("plugins")
+    if not isinstance(tables, dict):
+        return []
+    enabled = []
+    for plugin, table in tables.items():
+        name, at, market = plugin.partition("@")
+        if name and at and market and "@" not in market and isinstance(table, dict) and table.get("enabled") is True:
+            enabled.append(plugin)
+    return enabled
+
+
 def ensure_codex_plugins(listing, notes, warnings):
-    """Registers the missing marketplaces of the plugin list in Codex, installs its plugins Codex does not have, and
-    trusts every hook of its plugins for the current command. A plugin already installed is left as it is."""
+    """Registers the missing marketplaces of the plugin list in Codex, installs the plugins of the list and the
+    plugins ~/.codex/config.toml enables that Codex does not have, and trusts every hook of the list's plugins for
+    the current command. A plugin already installed is left as it is. Codex does not install a plugin its settings
+    enable, so a settings file kept in a repository would otherwise enable plugins no machine has (#45); the hooks
+    of a plugin only the settings enable keep Codex's own check."""
     plugins = listing["plugins"]
-    if not plugins:
-        return
     named = ", ".join(plugins)
-    command = codex_command()
-    if command is None:
-        warnings.append("Codex was not found, so the plugins {} are not installed or trusted yet. Install each with "
-                        "`codex plugin add <plugin>@<marketplace>`, then open /hooks in Codex and trust their hooks."
-                        .format(named))
-        return
     codex_home = os.path.join(home(), ".codex")
     config = os.path.join(codex_home, "config.toml")
     try:
         with open(config, "rb") as handle:
-            registered = set((tomllib.load(handle).get("marketplaces") or {}))
+            settings = tomllib.load(handle)
     except FileNotFoundError:
-        registered = set()
+        settings = {}
     except (OSError, tomllib.TOMLDecodeError) as error:
-        warnings.append("{} cannot be read ({}), so the plugins {} were not installed or trusted"
-                        .format(shown(config), error, named))
+        warnings.append("{} cannot be read ({}), so no Codex plugin was installed or trusted"
+                        .format(shown(config), error))
         return
+
+    def installed(plugin):
+        name, _, market = plugin.partition("@")
+        return os.path.isdir(os.path.join(codex_home, "plugins", "cache", market, name))
+
+    enabled = [plugin for plugin in enabled_codex_plugins(settings) if plugin not in plugins and not installed(plugin)]
+    if not plugins and not enabled:
+        return
+    command = codex_command()
+    if command is None:
+        if plugins:
+            warnings.append("Codex was not found, so the plugins {} are not installed or trusted yet. Install each "
+                            "with `codex plugin add <plugin>@<marketplace>`, then open /hooks in Codex and trust "
+                            "their hooks.".format(named))
+        if enabled:
+            warnings.append("Codex was not found, so the plugins {} that {} enables are not installed yet. Install "
+                            "each with `codex plugin add <plugin>@<marketplace>`.".format(", ".join(enabled),
+                                                                                      shown(config)))
+        return
+    registered = set(settings.get("marketplaces") or {})
     failed = set()
-    for market in sorted({plugin.partition("@")[2] for plugin in plugins} - registered):
-        url = listing["marketplaces"][market]
+    for market in sorted({plugin.partition("@")[2] for plugin in plugins + enabled} - registered):
+        url = listing["marketplaces"].get(market)
+        if url is None:
+            failed.add(market)
+            continue
         reason = run_codex(command, ["plugin", "marketplace", "add", url])
         if reason:
             failed.add(market)
@@ -899,9 +931,14 @@ def ensure_codex_plugins(listing, notes, warnings):
                             "`codex plugin marketplace add {}`".format(market, url, reason, url))
         else:
             notes.append("registered the Codex marketplace {} from {}".format(market, url))
-    for plugin in plugins:
+    for plugin in plugins + enabled:
         name, _, market = plugin.partition("@")
-        if market in failed or os.path.isdir(os.path.join(codex_home, "plugins", "cache", market, name)):
+        if market in failed and market not in listing["marketplaces"]:
+            warnings.append("the Codex plugin {} that {} enables was not installed: Codex has no marketplace {}. "
+                            "Register it with `codex plugin marketplace add <its git URL>`, then run "
+                            "`codex plugin add {}`".format(plugin, shown(config), market, plugin))
+            continue
+        if market in failed or installed(plugin):
             continue
         reason = run_codex(command, ["plugin", "add", plugin])
         if reason:
@@ -909,6 +946,8 @@ def ensure_codex_plugins(listing, notes, warnings):
                             .format(plugin, reason, plugin))
         else:
             notes.append("installed the Codex plugin {}".format(plugin))
+    if not plugins:
+        return
     try:
         changed = trust_codex_plugin_hooks(set(plugins))
     except TrustFailed as error:
@@ -1408,8 +1447,11 @@ def deploy(extra_sources, repo_argument):
     for place in sorted(trust_by_hand & set(hooks_text)):
         warnings.append("Codex runs a repository's hooks only after you trust them: open /hooks in Codex once "
                         "and trust the hooks in {}.".format(shown(place)))
-    if listing and any(row.get("plugins") == "codex" and row["name"] in written_agents for row in table):
-        ensure_codex_plugins(listing, notes, warnings)
+    # The plugins ~/.codex/config.toml enables are installed under the same condition as plugins.json is read:
+    # only a run that deploys the person's own source ~/.shared (#45).
+    if any(os.path.realpath(source.path) == main_path for source in run) \
+            and any(row.get("plugins") == "codex" and row["name"] in written_agents for row in table):
+        ensure_codex_plugins(listing or {"marketplaces": {}, "plugins": []}, notes, warnings)
 
     for line in notes:
         print(line)
