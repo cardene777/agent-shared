@@ -186,6 +186,15 @@ hookを信頼するとそのhookはどんな命令も動かせるので、読む
 一覧から外したプラグインは入ったまま信頼も残ります。消す時は`codex plugin remove <plugin>@<marketplace>`を実行します。
 `codex`のコマンドが無い時は、入れられなかったプラグインと信頼できなかったプラグインを実行の出力で名指します。
 
+### Codexの設定が有効にするプラグイン
+
+Codexは、`~/.codex/config.toml`が有効にするプラグインを自分では入れず、`codex plugin add`を待ちます。
+そこで`~/.shared`を配る実行は、`[plugins."<plugin>@<marketplace>"]`の表が`enabled = true`と書いていてCodexに無いプラグインも`codex plugin add`で入れます。
+`~/.shared`に`plugins.json`が無い時も入れます。
+こうして入れたプラグインのhookには信頼の印を書きません。
+hookを信頼させたいプラグインは`plugins.json`に書きます。
+Codexがマーケットプレイスを登録しておらず、`plugins.json`もそのgitのURLを書いていないプラグインは、打つ命令と一緒に実行の出力で名指し、ほかのプラグインはそのまま入れます。
+
 ## 読む物と書く物と残す物
 
 | 種類 | 場所 |
@@ -194,7 +203,7 @@ hookを信頼するとそのhookはどんな命令も動かせるので、読む
 | 書く物 | エージェントの表の置き場。自分が置いた物だけ |
 | 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと書き換えたルールの写しと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧で、`agent-shared remove`は外した配る元の項目をそこから消す。`AGENT_SHARED_STATE`でフォルダーを変えられる |
 | 動かす物 | `codex app-server`。置いたhookと、`~/.shared/plugins.json`が書くプラグインのhookにCodexの信頼の印を書くため。Codexにまだ無いマーケットプレイスとプラグインのために`codex plugin marketplace add`と`codex plugin add`。`AGENT_SHARED_CODEX_BIN`で別の`codex`のコマンドを指せる |
-| 送る物 | 自分では何も送らない。`codex plugin marketplace add`と`codex plugin add`が、`~/.shared/plugins.json`が書くマーケットプレイスとプラグインを取ってくる |
+| 送る物 | 自分では何も送らない。`codex plugin marketplace add`と`codex plugin add`が、`~/.shared/plugins.json`が書くマーケットプレイスとプラグインと、`~/.codex/config.toml`が有効にするプラグインを取ってくる |
 
 ## 自分が置いた物の見分け方
 

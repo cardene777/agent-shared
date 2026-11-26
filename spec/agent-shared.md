@@ -193,6 +193,7 @@ A hook runs a command, so a tool places the hooks of a source folder only after 
 - A tool reads only `~/.shared/plugins.json`, the person's own source, because trusting a hook lets it run any command. A `plugins.json` in another source folder or in a repository's `.shared` is not read, and the run names it.
 - Each run registers a marketplace Codex does not have, installs a named plugin Codex does not have, and writes Codex's trust for every hook of each named plugin for its current command, so a hook an update changed is trusted again.
 - A plugin taken off the list stays installed and keeps its trust; `codex plugin remove <plugin>@<marketplace>` removes it.
+- Codex does not install a plugin that `~/.codex/config.toml` enables, so a run that deploys `~/.shared` also installs each plugin whose `[plugins."<plugin>@<marketplace>"]` table says `enabled = true` and that Codex does not have, with or without a `plugins.json`. It writes no trust for the hooks of those plugins. A plugin whose marketplace Codex has not registered, and that `plugins.json` gives no git URL for, is named with the commands to run, and the others are still installed.
 - `agent-shared check` refuses a `plugins.json` whose top level is not an object, a plugin not written as `<plugin>@<marketplace>`, a plugin whose marketplace is not listed, and a marketplace without a git URL.
 
 ## Placing into a repository

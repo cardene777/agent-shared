@@ -202,6 +202,7 @@ hookは命令を動かすので、道具は利用者が1度認めた配る元の
 - hookを信頼するとそのhookはどんな命令も動かせるので、道具は利用者自身の配る元である`~/.shared/plugins.json`だけを読む。他の配る元やリポジトリの`.shared`にある`plugins.json`は読まず、実行の出力で名指す。
 - 実行のたびに、Codexに無いマーケットプレイスを登録し、Codexに無いプラグインを入れ、書いたプラグインの全てのhookに今の命令でCodexの信頼の印を書く。更新で変わったhookももう一度信頼される。
 - 一覧から外したプラグインは入ったまま信頼も残る。`codex plugin remove <plugin>@<marketplace>`で消す。
+- Codexは`~/.codex/config.toml`が有効にするプラグインを自分では入れないので、`~/.shared`を配る実行は、`[plugins."<plugin>@<marketplace>"]`の表が`enabled = true`と書いていてCodexに無いプラグインも入れる。`plugins.json`の有無は問わない。こうして入れたプラグインのhookには信頼の印を書かない。Codexがマーケットプレイスを登録しておらず、`plugins.json`もそのgitのURLを書いていないプラグインは、打つ命令と一緒に名指し、ほかのプラグインはそのまま入れる。
 - `agent-shared check`は、一番上がオブジェクトでない`plugins.json`、`<plugin>@<marketplace>`と書いていないプラグイン、マーケットプレイスが一覧に無いプラグイン、gitのURLが無いマーケットプレイスを断る。
 
 ## リポジトリへ置く
