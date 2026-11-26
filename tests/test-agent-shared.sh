@@ -1702,6 +1702,13 @@ definition_v11() {
   done
 }
 
+# The ikkan gates run the command of the Reached checks field after the recorded tests; without the
+# row, the test step's gate refuses every issue of the personal route.
+ikkan_reached_checks() {
+  grep -qE '^\| *Reached checks *\| *`bash tests/test-agent-shared\.sh` *\|$' "$ROOT/.ikkan/checks.md" 2> /dev/null \
+    || { why=".ikkan/checks.md has no Reached checks row naming bash tests/test-agent-shared.sh"; return 1; }
+}
+
 readmes_name_copilot() {
   local f
   for f in README.md README.ja.md; do
@@ -2221,6 +2228,7 @@ check "the two Agent Plugins proposals have the parts the contributing guide ask
 check "each proposal names the clients it ran on and links the definition" proposals_evidence
 check "each proposal names the Discussion it was posted as, its related threads, and the AI line" proposals_posted
 check "the definition relates itself to Agent Plugins v1.1" definition_v11
+check "the ikkan gates run these tests as the reached checks" ikkan_reached_checks
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]
