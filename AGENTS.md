@@ -16,6 +16,7 @@ README.md, README.ja.md         The guide, in English and in Japanese
 assets/icon.svg                 The icon, on the dark rounded square of agent-shuriken's icon
 CHANGELOG.md                    The releases
 .ikkan/specs/                   Acceptance criteria kept by the ikkan workflow
+.ikkan/checks.md                The checks the ikkan gates run besides each issue's tests
 ```
 
 Run tests against a throwaway `HOME`, never against a real agent folder.
