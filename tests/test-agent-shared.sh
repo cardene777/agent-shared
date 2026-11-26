@@ -19,7 +19,12 @@ BASE_PATH="${BASE_PATH%:}"
 
 ok() { PASS=$((PASS + 1)); printf 'ok    %s\n' "$1"; }
 ng() { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n' "$1"; [ -n "$why" ] && printf '      %s\n' "$why"; }
-check() { why=""; if "$2"; then ok "$1"; else ng "$1"; fi; }
+# ONLY, when set, is an extended regular expression: checks whose names it does not match are skipped, so a change
+# can run just the checks it touches.
+check() {
+  [ -z "${ONLY:-}" ] || printf '%s\n' "$1" | grep -qE "$ONLY" || return 0
+  why=""; if "$2"; then ok "$1"; else ng "$1"; fi
+}
 
 # The stand-in for `codex app-server`: lists the hooks in $CODEX_HOME/hooks.json and the hooks of the
 # plugins installed under $CODEX_HOME/plugins/cache with a hash of each command, reports an empty trust
@@ -2127,6 +2132,169 @@ readmes_install_here() {
   done
 }
 
+# Rules that start with frontmatter, in ~/.shared/rules: the same two patterns under globs (one comma-separated
+# string, as Cursor writes it), paths (a list, as Claude Code writes it), and applyTo (as GitHub Copilot writes it),
+# a rule scoped only by its description, and two rules without a scope (#43).
+scoped_rules() {
+  printf -- '---\nglobs: src/**/*.ts, test/**/*.ts\n---\n# Globs\nRule globs.\n' > "$HOME/.shared/rules/by-globs.md"
+  printf -- '---\npaths:\n  - "src/**/*.ts"\n  - "test/**/*.ts"\n---\n# Paths\nRule paths.\n' > "$HOME/.shared/rules/by-paths.md"
+  printf -- '---\napplyTo: "src/**/*.ts,test/**/*.ts"\n---\n# ApplyTo\nRule applyTo.\n' > "$HOME/.shared/rules/by-apply-to.md"
+  printf -- '---\ndescription: Use when writing tests.\nalwaysApply: false\n---\n# Described\nRule described.\n' \
+    > "$HOME/.shared/rules/by-description.md"
+  printf -- '---\nalwaysApply: true\nglobs: src/**\n---\n# Always\nRule always.\n' > "$HOME/.shared/rules/always.md"
+  printf -- '---\ntitle: Plain\n---\n# Plain\nRule plain.\n' > "$HOME/.shared/rules/plain.md"
+}
+SCOPE_LABEL='> Applies when working on files that match `src/**/*.ts`, `test/**/*.ts`.'
+DESCRIPTION_LABEL='> Apply this rule when the task fits: Use when writing tests.'
+PATHS_HEAD=$'---\npaths:\n  - "src/**/*.ts"\n  - "test/**/*.ts"\n---\n'
+
+# Prints the lines of rule $2 in the agent-shared block of file $1, from the line after its marker to the next
+# agent-shared line. Fails when the block has no such rule.
+rule_entry() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().splitlines(keepends=True)
+head = "<!-- agent-shared rule %s -->\n" % sys.argv[2]
+if head not in lines:
+    sys.exit(1)
+out = []
+for line in lines[lines.index(head) + 1:]:
+    if line.startswith("<!-- agent-shared "):
+        break
+    out.append(line)
+sys.stdout.write("".join(out))
+PY
+}
+
+# True when rule $2 in the block of file $1 holds exactly the text $3.
+entry_is() {
+  rule_entry "$1" "$2" > "$T/entry" || { why="$(basename "$1") has no entry for $2"; return 1; }
+  printf '%s' "$3" > "$T/want"
+  cmp -s "$T/entry" "$T/want" || { why="$2 is placed as: $(tr '\n' '|' < "$T/entry")"; return 1; }
+}
+
+# True when ~/.claude/rules/$1 is a file of its own, not a link, holding exactly the text $2.
+copy_is() {
+  local place="$HOME/.claude/rules/$1"
+  [ -f "$place" ] && [ ! -L "$place" ] || { why="~/.claude/rules/$1 is not a file of its own"; return 1; }
+  printf '%s' "$2" > "$T/want"
+  cmp -s "$place" "$T/want" || { why="~/.claude/rules/$1 holds: $(tr '\n' '|' < "$place")"; return 1; }
+}
+
+globs_block_label() {
+  fresh globs-block
+  scoped_rules
+  deployed || return 1
+  entry_is "$HOME/.codex/AGENTS.md" by-globs.md "$SCOPE_LABEL"$'\n# Globs\nRule globs.\n'
+}
+
+aliases_label() {
+  fresh aliases-label
+  scoped_rules
+  deployed || return 1
+  entry_is "$HOME/.codex/AGENTS.md" by-paths.md "$SCOPE_LABEL"$'\n# Paths\nRule paths.\n' || return 1
+  entry_is "$HOME/.codex/AGENTS.md" by-apply-to.md "$SCOPE_LABEL"$'\n# ApplyTo\nRule applyTo.\n'
+}
+
+description_label() {
+  fresh description-label
+  scoped_rules
+  deployed || return 1
+  entry_is "$HOME/.codex/AGENTS.md" by-description.md "$DESCRIPTION_LABEL"$'\n# Described\nRule described.\n'
+}
+
+unscoped_no_label() {
+  fresh unscoped
+  scoped_rules
+  deployed || return 1
+  entry_is "$HOME/.codex/AGENTS.md" always.md $'# Always\nRule always.\n' || return 1
+  entry_is "$HOME/.codex/AGENTS.md" plain.md $'# Plain\nRule plain.\n'
+}
+
+copilot_label() {
+  fresh copilot-label
+  mkdir -p "$HOME/.copilot"
+  copilot_installed
+  scoped_rules
+  deployed || return 1
+  entry_is "$HOME/$COPILOT_RULES" by-globs.md "$SCOPE_LABEL"$'\n# Globs\nRule globs.\n' || return 1
+  entry_is "$HOME/$COPILOT_RULES" by-description.md "$DESCRIPTION_LABEL"$'\n# Described\nRule described.\n'
+}
+
+claude_copy_globs() {
+  fresh claude-copy-globs
+  scoped_rules
+  deployed || return 1
+  copy_is by-globs.md "$PATHS_HEAD"$'# Globs\nRule globs.\n' || return 1
+  copy_is by-apply-to.md "$PATHS_HEAD"$'# ApplyTo\nRule applyTo.\n'
+}
+
+claude_copy_description() {
+  fresh claude-copy-description
+  scoped_rules
+  deployed || return 1
+  copy_is by-description.md "$DESCRIPTION_LABEL"$'\n# Described\nRule described.\n'
+}
+
+placed_lists_copy() {
+  fresh placed-copy
+  scoped_rules
+  deployed || return 1
+  [ -f "$HOME/.claude/rules/by-globs.md" ] && [ ! -L "$HOME/.claude/rules/by-globs.md" ] \
+    || { why="by-globs.md was not placed as a copy"; return 1; }
+  placed_ok --source "$HOME/.shared" || return 1
+  python3 - "$T/placed.out" > "$T/placed-copy.why" <<'PY' || { why="$(cat "$T/placed-copy.why")"; return 1; }
+import json, sys
+rules = json.load(open(sys.argv[1]))["agents"]["Claude Code"]["rules"]
+missing = [name for name in ("by-globs.md", "by-apply-to.md", "by-description.md", "by-paths.md") if name not in rules]
+if missing:
+    print("placed leaves out %s: %s" % (", ".join(missing), rules))
+    sys.exit(1)
+PY
+}
+
+remove_copy() {
+  fresh remove-copy
+  scoped_rules
+  deployed || return 1
+  [ -f "$HOME/.claude/rules/by-globs.md" ] && [ ! -L "$HOME/.claude/rules/by-globs.md" ] \
+    || { why="by-globs.md was not placed as a copy"; return 1; }
+  rm -rf "$HOME/.shared"
+  run remove --source "$HOME/.shared"
+  [ "$rc" = 0 ] || { why="remove exited $rc: $(tail -1 "$T/out")"; return 1; }
+  local name
+  for name in by-globs.md by-apply-to.md by-description.md; do
+    [ ! -e "$HOME/.claude/rules/$name" ] || { why="~/.claude/rules/$name is still there"; return 1; }
+  done
+}
+
+refuses_unclosed() {
+  fresh unclosed
+  printf -- '---\nglobs: src/**\n# Open\nRule open.\n' > "$HOME/.shared/rules/open.md"
+  cp "$HOME/.codex/AGENTS.md" "$T/agents-before.md"
+  run deploy
+  [ "$rc" != 0 ] || { why="deploy accepted a rule whose frontmatter is not closed"; return 1; }
+  grep -qF 'open.md' "$T/out" || { why="the refusal does not name the rule: $(tail -1 "$T/out")"; return 1; }
+  cmp -s "$HOME/.codex/AGENTS.md" "$T/agents-before.md" || { why="~/.codex/AGENTS.md changed"; return 1; }
+  [ ! -e "$HOME/.claude/rules/one.md" ] || { why="the other rules were placed"; return 1; }
+}
+
+paths_stays_link() {
+  fresh paths-link
+  scoped_rules
+  deployed || return 1
+  links_to "$HOME/.claude/rules/by-paths.md" "$HOME/.shared/rules/by-paths.md" \
+    || { why="~/.claude/rules/by-paths.md is not a link to the rule"; return 1; }
+}
+
+scope_label_documented() {
+  local f
+  for f in spec/agent-shared.md spec/agent-shared.ja.md README.md README.ja.md; do
+    grep -qF '> Applies when working on files that match' "$ROOT/$f" || { why="$f does not show the scope label"; return 1; }
+    grep -qF 'paths:' "$ROOT/$f" || { why="$f does not name the rewritten paths: field"; return 1; }
+  done
+}
+
 check "uv tool install puts agent-shared on PATH without any plugin" uv_installs
 check "deploy links every skill into the Claude Code and shared agent folders" links_skills
 check "deploy places nothing in the deprecated Codex skills folder" no_codex_skills
@@ -2229,6 +2397,18 @@ check "each proposal names the clients it ran on and links the definition" propo
 check "each proposal names the Discussion it was posted as, its related threads, and the AI line" proposals_posted
 check "the definition relates itself to Agent Plugins v1.1" definition_v11
 check "the ikkan gates run these tests as the reached checks" ikkan_reached_checks
+check "a rule scoped with globs is labelled in the Codex block without its frontmatter" globs_block_label
+check "paths and applyTo give the same label line as globs" aliases_label
+check "a rule scoped by description is labelled with when to apply it" description_label
+check "a rule without a scope is placed without frontmatter or label" unscoped_no_label
+check "Copilot CLI's block labels a scoped rule like Codex's" copilot_label
+check "Claude Code gets a copy rewritten to paths for a rule scoped with globs" claude_copy_globs
+check "Claude Code gets a labelled copy for a rule scoped by description" claude_copy_description
+check "placed lists a rewritten rule copy" placed_lists_copy
+check "remove takes out a rewritten rule copy, also after its folder is gone" remove_copy
+check "deploy refuses a rule whose frontmatter is not closed" refuses_unclosed
+check "a rule scoped with paths stays a link for Claude Code" paths_stays_link
+check "the definition and the READMEs describe the scope label and the rewritten copy" scope_label_documented
 
 printf '%d passed, %d failed (%d ran)\n' "$PASS" "$FAIL" "$((PASS + FAIL))"
 [ "$FAIL" -eq 0 ]
