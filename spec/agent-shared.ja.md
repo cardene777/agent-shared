@@ -1,6 +1,6 @@
 # agent-sharedの定義
 
-Definition version `2026-11-23`.
+Definition version `2026-11-26`.
 
 agent-sharedは、1つの配る元に置いたスキルとルールとhookを、利用者が使う各エージェントへ、そのエージェントが読む場所と形で置きます。
 hookはClaude Codeのhookの形で1回だけ宣言し、エージェントの表が、各エージェントのファイルの置き場と読むイベントを示します。
@@ -86,6 +86,43 @@ hookはClaude Codeのhookの形で1回だけ宣言し、エージェントの表
 
 スキルは、Claude Codeには`~/.claude/skills`へ、`~/.agents/skills`を読むエージェント (CodexとGitHub Copilot CLIを含む) にはそこへ置きます。
 
+### 範囲を持つルール
+
+ルールは、2つの`---`の行に挟んだfrontmatter(先頭の設定欄)で、効く範囲を絞れます。
+
+| 欄 | 書く道具 | 意味 |
+|---|---|---|
+| `paths` | Claude Code | ルールが効くファイルをglobのpatternで並べる |
+| `globs` | Cursor | 同じ物を、一覧か、コンマで区切った1つの文字列で書く |
+| `applyTo` | GitHub Copilot | 同じ物を、コンマで区切った1つの文字列で書く |
+| `alwaysApply` | Cursor | `true`なら、patternに関わらずどこでも効く |
+| `description` | Cursor | patternを持たないルールを、いつ当てるか |
+
+ルールのファイルは、どの作業にも全部のルールを読ませます。
+そこで道具は、frontmatterを持つルールをfrontmatterを外して囲みに書き、その上に範囲を書いた引用の1行を置きます。
+エージェントはルールを常に読み、その行が示す範囲に従います。
+ルールを落とさずに効かせ続けるためです。
+
+```text
+<!-- agent-shared rule typescript.md -->
+> Applies when working on files that match `src/**/*.ts`, `test/**/*.ts`.
+# TypeScript
+...
+```
+
+| 範囲 | 置く行 |
+|---|---|
+| `paths`か`globs`か`applyTo`のpattern | `> Applies when working on files that match <各patternをbacktickで囲む>.` |
+| patternの無い`description` | `> Apply this rule when the task fits: <description>` |
+| `alwaysApply: true`か、範囲の欄が無い | 置かない |
+
+ルールのリンクを置くフォルダーには、エージェントが範囲を読めない時、リンクの代わりに書き換えた写しを置きます。
+Claude Codeが読むのは`paths:`だけです。
+`globs`か`applyTo`で範囲を書いたルールには、patternを`paths:`に移した写しを置きます。
+`description`だけで範囲を書いたルールには、frontmatterの代わりに上の行で始まる写しを置きます。
+frontmatterの無いルールと、`paths`だけで範囲を書いたルールは、リンクのままです。
+1行目が`---`なのに閉じる`---`の行が無いルールは、何も書く前に断ります。
+
 ## エージェントの表
 
 エージェントの表は[`src/agent_shared/agents.json`](../src/agent_shared/agents.json)として公開し、各道具は自分で表を持たずにこの1つを読みます。
@@ -134,6 +171,7 @@ hookはClaude Codeのhookの形で1回だけ宣言し、エージェントの表
 | hook | 命令の最後の行の印`# agent-shared 1 source=<id>` |
 | 1つのファイルに書いたルール | 同じ`<id>`を持つ始まりと終わりの囲みの行 |
 | スキルかルールのリンク | リンクは印を持てないため、道具が自分で残す置いたリンクの記録 |
+| 書き換えたルールの写し | 同じ記録が、写しを中身のSHA-256と合わせて名指す。手で変えた写しは置き換えも外しもしない |
 
 `<id>`は、配る元の実際のpathのSHA-256の頭の16進数12桁です。
 道具は、自分が配る配る元の印を持つ物だけを外すか書き換え、それ以外には触れません。
@@ -201,7 +239,7 @@ Codexは、利用者がCodexの中で信頼したリポジトリのhookだけを
 
 | 版 | 形 | 場所 |
 |---|---|---|
-| この定義 | 日付、`2026-11-23` | この文書の頭 |
+| この定義 | 日付、`2026-11-26` | この文書の頭 |
 | 印 | 整数、`1` | `# agent-shared 1 source=<id>` |
 | エージェントの表 | 整数、`1` | `agents.json`の`version` |
 | エージェント | そのエージェント自身の版 | その行の`checked` |

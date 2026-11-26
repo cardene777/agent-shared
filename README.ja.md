@@ -67,6 +67,26 @@ Codexは古い置き場の`~/.codex/skills`も読み続けているため、コ�
 Codexは信頼したhookだけを動かすので、コマンドはCodexの`/hooks`の画面と同じやり方で、`codex app-server`を通して信頼の印を書きます。
 `codex`のコマンドが無い時と答えない時は、そのことを出し、Codexで`/hooks`を1度開くよう案内します。
 
+### 範囲を持つルール
+
+ルールは、先頭のfrontmatter(設定欄)で効く範囲を絞れます。
+Claude Codeは`paths:`、Cursorは`globs:`と`alwaysApply:`と`description:`、GitHub Copilotは`applyTo:`と書きます。
+CodexとCopilot CLIの指示のファイルはルールの範囲を絞れないので、その囲みにはfrontmatterを外したルールを書き、上に効く範囲を書いた引用の1行を置きます。
+
+```markdown
+<!-- agent-shared rule typescript.md -->
+> Applies when working on files that match `src/**/*.ts`, `test/**/*.ts`.
+# TypeScript
+...
+```
+
+`description:`だけで範囲を書いたルールには`> Apply this rule when the task fits: <description>`を置き、`alwaysApply: true`のルールと範囲の欄が無いルールには何も置きません。
+Claude Codeが読むのは`paths:`だけです。
+そのため、`globs:`か`applyTo:`で範囲を書いたルールは、patternを`paths:`に移した写しとして`~/.claude/rules`へ置きます。
+`description:`だけで範囲を書いたルールは、上の行で始まる写しとして置きます。
+写しはルールを直した後の次の配りで書き直し、frontmatterの無いルールと`paths:`だけのルールはリンクのままです。
+frontmatterを`---`で始めて閉じる`---`が無いルールは断り、何も書きません。
+
 ## リポジトリのスキルとルールとhook
 
 リポジトリは、自分のスキルとルールとhookを`.shared`に置けます。
@@ -172,7 +192,7 @@ hookを信頼するとそのhookはどんな命令も動かせるので、読む
 |---|---|
 | 読む物 | 配る元のフォルダー、`~/.claude/plugins/installed_plugins.json`、`~/.claude/settings.json`の`enabledPlugins`、`~/.codex/config.toml`、`~/.codex/plugins/cache`の下のスキルのフォルダー。`placed`は記録とエージェントの表の置き場だけを読む |
 | 書く物 | エージェントの表の置き場。自分が置いた物だけ |
-| 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧で、`agent-shared remove`は外した配る元の項目をそこから消す。`AGENT_SHARED_STATE`でフォルダーを変えられる |
+| 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと書き換えたルールの写しと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧で、`agent-shared remove`は外した配る元の項目をそこから消す。`AGENT_SHARED_STATE`でフォルダーを変えられる |
 | 動かす物 | `codex app-server`。置いたhookと、`~/.shared/plugins.json`が書くプラグインのhookにCodexの信頼の印を書くため。Codexにまだ無いマーケットプレイスとプラグインのために`codex plugin marketplace add`と`codex plugin add`。`AGENT_SHARED_CODEX_BIN`で別の`codex`のコマンドを指せる |
 | 送る物 | 自分では何も送らない。`codex plugin marketplace add`と`codex plugin add`が、`~/.shared/plugins.json`が書くマーケットプレイスとプラグインを取ってくる |
 
@@ -181,6 +201,7 @@ hookを信頼するとそのhookはどんな命令も動かせるので、読む
 | 置いた物 | 印 |
 |---|---|
 | スキルとルールのリンク | 記録が、リンクごとに指す先を持つ |
+| 書き換えたルールの写し | 記録が、写しごとに中身のSHA-256を持つので、手で変えた写しは置き換えも外しもしない |
 | ルールの囲み | 前後の`<!-- agent-shared begin source=<id> -->`と`<!-- agent-shared end source=<id> -->`の行 |
 | hook | 命令の最後の行が、shellのコメント`# agent-shared 1 source=<id>` |
 

@@ -1,6 +1,6 @@
 # The agent-shared definition
 
-Definition version `2026-11-23`.
+Definition version `2026-11-26`.
 
 agent-shared places the skills, rules, and hooks kept in one source folder into every coding agent a person uses, in the place and shape each agent reads.
 A hook is declared once, in Claude Code's hook shape, and an agent table says where each agent keeps its files and which events it reads.
@@ -84,6 +84,39 @@ A tool writes each hook into every agent of the agent table in that agent's shap
 
 Skills go into `~/.claude/skills` for Claude Code and into `~/.agents/skills` for the agents that read it, Codex and GitHub Copilot CLI among them.
 
+### Rules with a scope
+
+A rule may start with frontmatter between two `---` lines that limits where it applies.
+
+| Field | Written by | Meaning |
+|---|---|---|
+| `paths` | Claude Code | The files the rule applies to, as glob patterns |
+| `globs` | Cursor | The same, as a list or one string of patterns separated by commas |
+| `applyTo` | GitHub Copilot | The same, as one string of patterns separated by commas |
+| `alwaysApply` | Cursor | `true` makes the rule apply everywhere, whatever the patterns say |
+| `description` | Cursor | When to apply a rule that has no patterns |
+
+A rules file holds every rule for every task, so a tool writes a rule with frontmatter into a block without its frontmatter, under one quoted line that states its scope.
+The agent reads the rule always and follows the scope the line names, which keeps a rule in force rather than dropping it.
+
+```text
+<!-- agent-shared rule typescript.md -->
+> Applies when working on files that match `src/**/*.ts`, `test/**/*.ts`.
+# TypeScript
+...
+```
+
+| Scope | The line |
+|---|---|
+| Patterns in `paths`, `globs`, or `applyTo` | `> Applies when working on files that match <each pattern in backticks>.` |
+| `description` without patterns | `> Apply this rule when the task fits: <description>` |
+| `alwaysApply: true`, or no scope field | no line |
+
+A folder of rule links gets a rewritten copy in place of a link when the agent would not read the scope: Claude Code reads only `paths:`.
+A rule scoped with `globs` or `applyTo` gets a copy with its patterns under `paths:`, and a rule scoped only by `description` gets a copy that starts with the line above instead of its frontmatter.
+A rule without frontmatter, or scoped with `paths` only, stays a link.
+A rule whose first line is `---` and that has no closing `---` line is refused before anything is written.
+
 ## Agent table
 
 The agent table is published as [`src/agent_shared/agents.json`](../src/agent_shared/agents.json), and every tool reads that one table instead of keeping its own.
@@ -131,6 +164,7 @@ Placed rules sit between two fence lines in the agent's rules file.
 | Hook | The mark `# agent-shared 1 source=<id>` on the last line of its command |
 | Rules in one file | The begin and end fence lines with the same `<id>` |
 | Skill or rule link | The tool's own record of the links it placed, since a link cannot carry a mark |
+| Rewritten copy of a rule | The same record, which names the copy with the SHA-256 of its text; a copy changed by hand is neither replaced nor taken out |
 
 `<id>` is the first 12 hexadecimal digits of the SHA-256 of the source folder's real path.
 A tool takes out or rewrites only entries that carry the mark of a source folder it deploys, and leaves every other entry as it is.
@@ -195,7 +229,7 @@ For a repository's `.shared`, the repository's own files are cleaned too.
 
 | Version | Form | Where |
 |---|---|---|
-| This definition | a date, `2026-11-23` | the top of this text |
+| This definition | a date, `2026-11-26` | the top of this text |
 | The mark | an integer, `1` | `# agent-shared 1 source=<id>` |
 | The agent table | an integer, `1` | `version` of `agents.json` |
 | An agent | the agent's own version | `checked` of its row |
