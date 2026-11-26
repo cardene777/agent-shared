@@ -484,9 +484,129 @@ def find_repo(argument):
         here = parent
 
 
+def file_digest(path):
+    with open(path, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
 def still_placed(place, target):
-    """Whether `place` is still the link agent-shared placed there, pointing at the target it was given."""
+    """Whether `place` is still what agent-shared placed there: the link pointing at the target it was given, or,
+    for a target `{"copy": <digest>}`, the rewritten copy of a rule with the same SHA-256."""
+    if isinstance(target, dict):
+        return os.path.isfile(place) and not os.path.islink(place) and file_digest(place) == target.get("copy")
     return os.path.islink(place) and os.readlink(place) == target
+
+
+def unquoted(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def split_patterns(value):
+    """The patterns of one scope field: a YAML list, or a string of patterns separated by commas, as Cursor and
+    GitHub Copilot write them. A comma inside braces, as in `*.{ts,tsx}`, belongs to its pattern."""
+    if isinstance(value, list):
+        return [item for item in (unquoted(item) for item in value) if item]
+    text = unquoted(value)
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    parts, depth, current = [], 0, ""
+    for character in text:
+        depth += {"{": 1, "}": -1}.get(character, 0)
+        if character == "," and depth <= 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += character
+    parts.append(current)
+    return [item for item in (unquoted(part) for part in parts) if item]
+
+
+def frontmatter_fields(head):
+    """The top-level fields of frontmatter lines, each a string or, for an indented `- item` list, a list. A block
+    scalar (`>` or `|`) joins its indented lines with spaces. Only the scope fields are read from the result."""
+    fields, key = {}, None
+    for line in head:
+        text = line.rstrip("\r\n")
+        if not text.strip() or text.lstrip().startswith("#"):
+            continue
+        item = re.match(r"^\s+-\s*(.*)$", text)
+        if item and key is not None and isinstance(fields.get(key), list):
+            fields[key].append(item.group(1))
+            continue
+        if text[:1].isspace() and key is not None and isinstance(fields.get(key), str):
+            fields[key] = (fields[key] + " " + text.strip()).strip()
+            continue
+        field = re.match(r"^([A-Za-z_][\w-]*)\s*:\s*(.*)$", text)
+        if not field:
+            key = None
+            continue
+        key, value = field.group(1), field.group(2).strip()
+        fields[key] = [] if not value else ("" if value in (">", "|", ">-", "|-") else value)
+    return fields
+
+
+class Rule:
+    """A rule file and the scope its frontmatter gives: the patterns of `paths`, `globs`, and `applyTo` (Claude Code,
+    Cursor, and GitHub Copilot name the same thing three ways), `alwaysApply`, and `description` (#43)."""
+
+    def __init__(self, path):
+        with open(path, encoding="utf-8") as handle:
+            self.text = handle.read()
+        lines = self.text.splitlines(keepends=True)
+        self.head = None
+        self.body = self.text
+        if lines and lines[0].rstrip("\r\n") == "---":
+            close = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r\n") == "---"), None)
+            if close is None:
+                raise ValueError("its frontmatter opens with --- and no line closes it with ---")
+            self.head, self.body = lines[1:close], "".join(lines[close + 1:])
+        fields = frontmatter_fields(self.head or [])
+        self.patterns = []
+        for key in ("paths", "globs", "applyTo"):
+            for pattern in split_patterns(fields.get(key) or []):
+                if pattern not in self.patterns:
+                    self.patterns.append(pattern)
+        always = fields.get("alwaysApply")
+        self.always = isinstance(always, str) and unquoted(always).lower() == "true"
+        description = fields.get("description")
+        self.description = unquoted(description) if isinstance(description, str) else ""
+        # The fields Claude Code does not read as a scope.
+        self.foreign = any(split_patterns(fields.get(key) or []) for key in ("globs", "applyTo"))
+
+    def label(self):
+        """The quoted line that says where the rule applies, or None for a rule that applies everywhere."""
+        if self.always:
+            return None
+        if self.patterns:
+            return "> Applies when working on files that match {}.".format(", ".join("`{}`".format(p) for p in self.patterns))
+        if self.description:
+            return "> Apply this rule when the task fits: {}".format(self.description)
+        return None
+
+    def block_text(self):
+        """What a rules block holds for the rule: a file without frontmatter as it is, and otherwise the body without
+        the frontmatter, under the label when the rule has a scope. One rules file cannot scope a rule, so the
+        agent reads it always, with the scope written for it to follow."""
+        if self.head is None:
+            return self.text
+        label = self.label()
+        return (label + "\n" if label else "") + self.body
+
+    def copy_text(self):
+        """The text placed in a folder of rule links in place of a link, or None when a link serves. Claude Code
+        reads only `paths:`, so a rule scoped with `globs:` or `applyTo:` gets its patterns under `paths:`, and a rule
+        scoped only by its description gets the label in place of its frontmatter."""
+        if self.always:
+            return None
+        if self.patterns and self.foreign:
+            head = "".join("  - {}\n".format(json.dumps(p, ensure_ascii=False)) for p in self.patterns)
+            return "---\npaths:\n" + head + "---\n" + self.body
+        if not self.patterns and self.description:
+            return "> Apply this rule when the task fits: {}\n".format(self.description) + self.body
+        return None
 
 
 def is_marked(hook, ids=None):
@@ -559,10 +679,9 @@ def block_lines(lines, sid, where, refusals):
 
 
 def rules_block(sid, rules):
+    """The source's block for a rules file. `rules` holds (name, text) pairs, the text being Rule.block_text()."""
     out = [BEGIN.format(sid) + "\n"]
-    for name, path in rules:
-        with open(path, encoding="utf-8") as handle:
-            body = handle.read()
+    for name, body in rules:
         out.append(RULE.format(name) + "\n")
         out.append(body if body.endswith("\n") else body + "\n")
     out.append(END.format(sid) + "\n")
@@ -1083,7 +1202,28 @@ def deploy(extra_sources, repo_argument):
             notes.append("the hooks of {} were not placed: approve them with `agent-shared approve --source {}`"
                          .format(repo.path, repo.path))
 
-    # links: place -> (target text, source)
+    # Every rule is read once, so a rule whose frontmatter cannot be read is refused before anything is written.
+    parsed = {}
+    for path in [path for path, _source in rules.values()] + (list(repo.rules().values()) if repo else []):
+        try:
+            parsed[path] = Rule(path)
+        except (OSError, UnicodeError) as error:
+            refusals.append("the rule {} cannot be read ({})".format(shown(path), error))
+        except ValueError as error:
+            refusals.append("the rule {} cannot be placed: {}".format(shown(path), error))
+    # The rewritten copies a folder of rule links gets in place of a link: place -> text.
+    copies = {}
+
+    def rule_target(place, path, link_target):
+        """What `place` gets for the rule at `path`: the link target, or {"copy": <digest>} when the rule needs a
+        rewritten copy, whose text goes into `copies`."""
+        text = parsed[path].copy_text() if path in parsed else None
+        if text is None:
+            return link_target
+        copies[place] = text
+        return {"copy": hashlib.sha256(text.encode("utf-8")).hexdigest()}
+
+    # links: place -> (target text, or {"copy": digest} for a rewritten copy, source)
     wanted = {}
     blocks = {}
     hook_files = {}
@@ -1128,7 +1268,7 @@ def deploy(extra_sources, repo_argument):
                     if not off.rule_off(source, row["name"], name)}
             if form == "link":
                 for name, (path, source) in kept.items():
-                    wanted[os.path.join(place, name)] = (path, source)
+                    wanted[os.path.join(place, name)] = (rule_target(os.path.join(place, name), path, path), source)
             else:
                 blocks[place] = {source.id: sorted((name, path) for name, (path, owner) in kept.items() if owner is source)
                                  for source in sources}
@@ -1155,7 +1295,8 @@ def deploy(extra_sources, repo_argument):
             kept = {name: path for name, path in repo.rules().items() if not off.rule_off(repo, row["name"], name)}
             if row["repo_rules"]["form"] == "link":
                 for name, path in kept.items():
-                    wanted[os.path.join(place, name)] = (os.path.relpath(path, place), repo)
+                    wanted[os.path.join(place, name)] = (
+                        rule_target(os.path.join(place, name), path, os.path.relpath(path, place)), repo)
             else:
                 blocks[place] = {repo.id: sorted(kept.items())}
 
@@ -1176,7 +1317,11 @@ def deploy(extra_sources, repo_argument):
             refusals.append("{} was placed from another source, {}; deploy both sources in one run"
                             .format(shown(place), shown(entry.get("path", "?"))))
         elif os.path.lexists(place) and not (owner is not None and still_placed(place, record.sources[owner]["links"][place])):
-            refusals.append("{} is in the way: agent-shared did not place it".format(shown(place)))
+            if owner is not None and isinstance(record.sources[owner]["links"][place], dict):
+                refusals.append("{} was changed after agent-shared placed it; move it away to place the rule again"
+                                .format(shown(place)))
+            else:
+                refusals.append("{} is in the way: agent-shared did not place it".format(shown(place)))
 
     blocks_text = {}
     for place, by_source in blocks.items():
@@ -1191,7 +1336,8 @@ def deploy(extra_sources, repo_argument):
                     if any(line.startswith(MARK_LINE_START) for line in handle):
                         refusals.append("the rule {} has a line that starts like an agent-shared marker".format(shown(path)))
             found = block_lines(lines, sid, place, refusals)
-            new = rules_block(sid, items).splitlines(keepends=True) if items else []
+            entries = [(name, parsed[path].block_text()) for name, path in items if path in parsed]
+            new = rules_block(sid, entries).splitlines(keepends=True) if entries else []
             if found:
                 lines[found[0]:found[1] + 1] = new
             elif new:
@@ -1240,6 +1386,10 @@ def deploy(extra_sources, repo_argument):
         if still_placed(place, target):
             continue
         os.makedirs(os.path.dirname(place), exist_ok=True)
+        if place in copies:
+            write_text(place, copies[place])
+            notes.append("placed {}, rewritten to the scope fields the agent reads".format(shown(place)))
+            continue
         os.symlink(target, place)
         notes.append("placed {}".format(shown(place)))
     for place, text in sorted(blocks_text.items()):

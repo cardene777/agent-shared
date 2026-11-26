@@ -67,6 +67,23 @@ Codex also reads `~/.codex/skills`, which Codex keeps only for older setups, so 
 Codex runs a hook only after you trust it, so the command writes that trust through `codex app-server`, the same way Codex's `/hooks` screen does.
 When the `codex` command is missing or does not answer, the command says so and asks you to open `/hooks` in Codex once.
 
+### Rules with a scope
+
+A rule can start with frontmatter that limits where it applies: `paths:` as Claude Code writes it, `globs:`, `alwaysApply:`, and `description:` as Cursor writes them, or `applyTo:` as GitHub Copilot writes it.
+Codex's and Copilot CLI's instructions files cannot scope a rule, so their block holds the rule without its frontmatter, under one quoted line that says where it applies.
+
+```markdown
+<!-- agent-shared rule typescript.md -->
+> Applies when working on files that match `src/**/*.ts`, `test/**/*.ts`.
+# TypeScript
+...
+```
+
+A rule scoped only by `description:` gets `> Apply this rule when the task fits: <description>`, and a rule with `alwaysApply: true` or without a scope field gets no line.
+Claude Code reads only `paths:`, so a rule scoped with `globs:` or `applyTo:` goes into `~/.claude/rules` as a copy with its patterns under `paths:`, and a rule scoped only by `description:` as a copy that starts with the line above.
+A copy is rewritten on the next deploy after you edit the rule, while a rule without frontmatter, or with `paths:` only, stays a link.
+A rule whose frontmatter opens with `---` and has no closing `---` is refused, and nothing is written.
+
 ## A repository's skills, rules, and hooks
 
 A repository can keep its own skills, rules, and hooks in `.shared`.
@@ -170,7 +187,7 @@ Without the `codex` command, the run names the plugins it could not install or t
 |---|---|
 | Reads | The source folders, `~/.claude/plugins/installed_plugins.json`, `enabledPlugins` in `~/.claude/settings.json`, `~/.codex/config.toml`, and the skill folders under `~/.codex/plugins/cache`. `placed` reads only the record and the places in the agent table |
 | Writes | The places in the agent table, only for what it placed itself |
-| Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link it placed and each source you approved, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write and that `agent-shared remove` drops the removed source's entries from. `AGENT_SHARED_STATE` moves the folder |
+| Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link and rewritten rule copy it placed and each source you approved, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write and that `agent-shared remove` drops the removed source's entries from. `AGENT_SHARED_STATE` moves the folder |
 | Runs | `codex app-server`, to write Codex's trust for the hooks it placed and for the hooks of the plugins `~/.shared/plugins.json` names, and `codex plugin marketplace add` and `codex plugin add` for the marketplaces and plugins Codex does not have yet. `AGENT_SHARED_CODEX_BIN` names another `codex` command |
 | Sends | Nothing itself. `codex plugin marketplace add` and `codex plugin add` fetch the marketplaces and plugins that `~/.shared/plugins.json` names |
 
@@ -179,6 +196,7 @@ Without the `codex` command, the run names the plugins it could not install or t
 | Entry | Mark |
 |---|---|
 | Skill and rule links | The record names each link and the target it was given |
+| Rewritten copies of rules | The record names each copy and the SHA-256 of its text, so a copy you changed by hand is neither replaced nor taken out |
 | The rules block | The lines `<!-- agent-shared begin source=<id> -->` and `<!-- agent-shared end source=<id> -->` around it |
 | Hooks | The command's last line is the shell comment `# agent-shared 1 source=<id>` |
 

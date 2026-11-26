@@ -3,6 +3,10 @@
 This file lists the releases of `agent-shared`, newest first.
 Versions follow semantic versioning, and each release is tagged `v<version>`.
 
+## [Unreleased]
+
+- A rule with frontmatter that scopes it (`paths:`, `globs:`, `applyTo:`, `alwaysApply:`, or `description:`) goes into Codex's and GitHub Copilot CLI's block without its frontmatter, under one quoted line that says where it applies; Claude Code gets a copy rewritten to `paths:` for a rule scoped with `globs:` or `applyTo:`, and a copy that starts with that line for a rule scoped only by `description:`. A rule whose frontmatter is not closed is refused (#43)
+
 ## [0.3.0] - 2026-11-25
 
 - `~/.shared/plugins.json` names the Codex plugins whose hooks you trust, with the git URL of each marketplace. Each deploy registers a marketplace Codex does not have, installs a named plugin Codex does not have, and writes Codex's trust for every hook of each named plugin for its current command, so a hook an update changed is trusted again without opening `/hooks` (#37)
