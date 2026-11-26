@@ -195,15 +195,22 @@ Codexは、`~/.codex/config.toml`が有効にするプラグインを自分で�
 hookを信頼させたいプラグインは`plugins.json`に書きます。
 Codexがマーケットプレイスを登録しておらず、`plugins.json`もそのgitのURLを書いていないプラグインは、打つ命令と一緒に実行の出力で名指し、ほかのプラグインはそのまま入れます。
 
+### Claude Codeの設定が有効にするプラグイン
+
+Claude Codeは、設定が書くマーケットプレイスを取ってくる時にそのマーケットプレイスの有効なプラグインも取ってきますが、登録済みのマーケットプレイスの有効なプラグインは自分では入れません。
+そこで`~/.shared`を配る実行は、`~/.claude/settings.json`の`enabledPlugins`が`true`にしていて、マーケットプレイスが`~/.claude/plugins/known_marketplaces.json`にあり、`~/.claude/plugins/installed_plugins.json`にユーザーの範囲の記録が無いプラグインに、`claude plugin install <plugin>@<marketplace> --scope user`を打ちます。
+Claude Codeが登録していないマーケットプレイスのプラグインは、Claude Codeに任せます。
+`claude`のコマンドが無い時は、入れなかったプラグインを実行の出力で名指します。
+
 ## 読む物と書く物と残す物
 
 | 種類 | 場所 |
 |---|---|
-| 読む物 | 配る元のフォルダー、`~/.claude/plugins/installed_plugins.json`、`~/.claude/settings.json`の`enabledPlugins`、`~/.codex/config.toml`、`~/.codex/plugins/cache`の下のスキルのフォルダー。`placed`は記録とエージェントの表の置き場だけを読む |
+| 読む物 | 配る元のフォルダー、`~/.claude/plugins/installed_plugins.json`、`~/.claude/plugins/known_marketplaces.json`、`~/.claude/settings.json`の`enabledPlugins`、`~/.codex/config.toml`、`~/.codex/plugins/cache`の下のスキルのフォルダー。`placed`は記録とエージェントの表の置き場だけを読む |
 | 書く物 | エージェントの表の置き場。自分が置いた物だけ |
 | 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと書き換えたルールの写しと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧で、`agent-shared remove`は外した配る元の項目をそこから消す。`AGENT_SHARED_STATE`でフォルダーを変えられる |
-| 動かす物 | `codex app-server`。置いたhookと、`~/.shared/plugins.json`が書くプラグインのhookにCodexの信頼の印を書くため。Codexにまだ無いマーケットプレイスとプラグインのために`codex plugin marketplace add`と`codex plugin add`。`AGENT_SHARED_CODEX_BIN`で別の`codex`のコマンドを指せる |
-| 送る物 | 自分では何も送らない。`codex plugin marketplace add`と`codex plugin add`が、`~/.shared/plugins.json`が書くマーケットプレイスとプラグインと、`~/.codex/config.toml`が有効にするプラグインを取ってくる |
+| 動かす物 | `codex app-server`。置いたhookと、`~/.shared/plugins.json`が書くプラグインのhookにCodexの信頼の印を書くため。Codexにまだ無いマーケットプレイスとプラグインのために`codex plugin marketplace add`と`codex plugin add`。Claude Codeにまだ無い、`enabledPlugins`が有効にするプラグインのために`claude plugin install`。`AGENT_SHARED_CODEX_BIN`と`AGENT_SHARED_CLAUDE_BIN`で別の`codex`と`claude`のコマンドを指せる |
+| 送る物 | 自分では何も送らない。`codex plugin marketplace add`と`codex plugin add`が、`~/.shared/plugins.json`が書くマーケットプレイスとプラグインと、`~/.codex/config.toml`が有効にするプラグインを取ってくる。`claude plugin install`が、`enabledPlugins`が有効にするプラグインを取ってくる |
 
 ## 自分が置いた物の見分け方
 

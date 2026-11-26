@@ -203,6 +203,7 @@ hookは命令を動かすので、道具は利用者が1度認めた配る元の
 - 実行のたびに、Codexに無いマーケットプレイスを登録し、Codexに無いプラグインを入れ、書いたプラグインの全てのhookに今の命令でCodexの信頼の印を書く。更新で変わったhookももう一度信頼される。
 - 一覧から外したプラグインは入ったまま信頼も残る。`codex plugin remove <plugin>@<marketplace>`で消す。
 - Codexは`~/.codex/config.toml`が有効にするプラグインを自分では入れないので、`~/.shared`を配る実行は、`[plugins."<plugin>@<marketplace>"]`の表が`enabled = true`と書いていてCodexに無いプラグインも入れる。`plugins.json`の有無は問わない。こうして入れたプラグインのhookには信頼の印を書かない。Codexがマーケットプレイスを登録しておらず、`plugins.json`もそのgitのURLを書いていないプラグインは、打つ命令と一緒に名指し、ほかのプラグインはそのまま入れる。
+- Claude Codeは登録済みのマーケットプレイスの有効なプラグインを自分では入れないので、`~/.shared`を配る実行は、`~/.claude/settings.json`の`enabledPlugins`が`true`にしていて、マーケットプレイスが`~/.claude/plugins/known_marketplaces.json`にあり、`~/.claude/plugins/installed_plugins.json`にユーザーの範囲の記録が無いプラグインに、`claude plugin install <plugin>@<marketplace> --scope user`を打つ。Claude Codeが登録していないマーケットプレイスのプラグインは、マーケットプレイスを取ってくる時にClaude Codeが取ってくるので任せる。`claude`のコマンドが無い時は、入れなかったプラグインを名指す。
 - `agent-shared check`は、一番上がオブジェクトでない`plugins.json`、`<plugin>@<marketplace>`と書いていないプラグイン、マーケットプレイスが一覧に無いプラグイン、gitのURLが無いマーケットプレイスを断る。
 
 ## リポジトリへ置く
