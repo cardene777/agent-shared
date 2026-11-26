@@ -133,6 +133,40 @@ for line in sys.stdin:
 PY
 chmod +x "$T/bin/codex"
 
+# The stand-in for `claude plugin install <plugin>@<marketplace> --scope user`: copies the plugin from the
+# marketplace folder that ~/.claude/plugins/known_marketplaces.json names into the plugin cache, writes its
+# user-scope record into installed_plugins.json, and logs its arguments to $STUB_LOG.
+cat > "$T/bin/claude" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import shutil
+import sys
+
+base = os.path.join(os.environ["HOME"], ".claude", "plugins")
+log = os.environ.get("STUB_LOG")
+if log:
+    with open(log, "a") as handle:
+        handle.write(json.dumps({"argv": sys.argv[1:]}) + "\n")
+args = sys.argv[1:]
+if args[:2] != ["plugin", "install"] or len(args) != 5 or args[3:] != ["--scope", "user"] or "@" not in args[2]:
+    sys.exit(2)
+plugin, market = args[2].split("@", 1)
+known = os.path.join(base, "known_marketplaces.json")
+markets = json.load(open(known)) if os.path.exists(known) else {}
+location = (markets.get(market) or {}).get("installLocation")
+if not location:
+    print("marketplace %s is not known" % market, file=sys.stderr)
+    sys.exit(1)
+cache = os.path.join(base, "cache", market, plugin, "1.0.0")
+shutil.copytree(os.path.join(location, "plugins", plugin), cache)
+installed = os.path.join(base, "installed_plugins.json")
+data = json.load(open(installed)) if os.path.exists(installed) else {"version": 2, "plugins": {}}
+data["plugins"].setdefault(args[2], []).append({"scope": "user", "installPath": cache, "version": "1.0.0"})
+json.dump(data, open(installed, "w"))
+PY
+chmod +x "$T/bin/claude"
+
 # A new throwaway HOME with two skills, two rules, and two hooks in ~/.shared, and settings that already
 # hold the user's own entries.
 fresh() {
@@ -140,6 +174,7 @@ fresh() {
   rm -rf "$T/version-bin"
   export HOME="$T/home-$1"
   export AGENT_SHARED_CODEX_BIN="$T/bin/codex"
+  export AGENT_SHARED_CLAUDE_BIN="$T/bin/claude"
   export STUB_LOG="$HOME/codex-calls.jsonl"
   unset AGENT_SHARED_STATE STUB_STATE MARKET
   RUN_DIR="$HOME"
@@ -654,6 +689,127 @@ definition_enabled_plugins() {
   for f in README.md README.ja.md spec/agent-shared.md spec/agent-shared.ja.md; do
     grep -qF '~/.codex/config.toml' "$ROOT/$f" || { why="$f does not name ~/.codex/config.toml"; return 1; }
     grep -qF 'enabled = true' "$ROOT/$f" || { why="$f does not say which plugins of the Codex config deploy installs"; return 1; }
+  done
+}
+
+# A throwaway Claude Code marketplace named `market` with the plugins kit, other, and extra, each with one
+# skill, registered in ~/.claude/plugins/known_marketplaces.json as Claude Code registers it.
+claude_market() {
+  local folder="$T/claude-market-$1" plugin
+  for plugin in kit other extra; do
+    mkdir -p "$folder/plugins/$plugin/skills/$plugin-skill"
+    printf -- '---\nname: %s-skill\ndescription: From %s.\n---\n' "$plugin" "$plugin" > "$folder/plugins/$plugin/skills/$plugin-skill/SKILL.md"
+  done
+  mkdir -p "$HOME/.claude/plugins"
+  printf '{"market": {"source": {"source": "directory", "path": "%s"}, "installLocation": "%s"}}\n' "$folder" "$folder" \
+    > "$HOME/.claude/plugins/known_marketplaces.json"
+}
+
+# Sets the plugin $1 to $2 (true or false) in enabledPlugins of the throwaway ~/.claude/settings.json.
+claude_enabled() {
+  python3 - "$HOME/.claude/settings.json" "$1" "$2" <<'PY'
+import json, sys
+path, plugin, value = sys.argv[1], sys.argv[2], sys.argv[3] == "true"
+data = json.load(open(path))
+data.setdefault("enabledPlugins", {})[plugin] = value
+json.dump(data, open(path, "w"), indent=2)
+PY
+}
+
+# Writes a user-scope record of the plugin $1 of the marketplace, as if Claude Code had installed it.
+claude_installed() {
+  local cache="$HOME/.claude/plugins/cache/market/$1/1.0.0"
+  mkdir -p "$cache"
+  python3 - "$HOME/.claude/plugins/installed_plugins.json" "$1@market" "$cache" <<'PY'
+import json, os, sys
+path, plugin, cache = sys.argv[1:]
+data = json.load(open(path)) if os.path.exists(path) else {"version": 2, "plugins": {}}
+data["plugins"].setdefault(plugin, []).append({"scope": "user", "installPath": cache, "version": "1.0.0"})
+json.dump(data, open(path, "w"))
+PY
+}
+
+# True when installed_plugins.json holds a user-scope record of the plugin $1 of the marketplace.
+claude_has_user_record() {
+  python3 - "$HOME/.claude/plugins/installed_plugins.json" "$1@market" <<'PY'
+import json, os, sys
+path, plugin = sys.argv[1:]
+data = json.load(open(path)) if os.path.exists(path) else {}
+entries = (data.get("plugins") or {}).get(plugin) or []
+sys.exit(0 if any(isinstance(e, dict) and e.get("scope") == "user" for e in entries) else 1)
+PY
+}
+
+installs_claude_enabled() {
+  fresh claude-install
+  claude_market install
+  claude_enabled kit@market true
+  deployed || return 1
+  codex_ran plugin install kit@market --scope user || { why="deploy did not run claude plugin install kit@market --scope user"; return 1; }
+  claude_has_user_record kit || { why="installed_plugins.json has no user-scope record of kit@market"; return 1; }
+}
+
+# Next to a plugin to install, a plugin set to false and a plugin already installed are left as they are.
+skips_claude_false_or_installed() {
+  fresh claude-skip
+  claude_market skip
+  claude_enabled kit@market true
+  claude_installed kit
+  claude_enabled other@market false
+  claude_enabled extra@market true
+  deployed || return 1
+  codex_ran plugin install extra@market --scope user || { why="deploy did not install extra@market, which is enabled and missing"; return 1; }
+  ! codex_ran plugin install kit@market --scope user || { why="deploy installed kit@market again although it has a user-scope record"; return 1; }
+  ! codex_ran plugin install other@market --scope user || { why="deploy installed other@market although enabledPlugins sets it to false"; return 1; }
+  ! claude_has_user_record other || { why="other@market got a user-scope record"; return 1; }
+}
+
+# A plugin of a marketplace Claude Code has not registered is left to Claude Code, and the rest are installed.
+leaves_unregistered_claude_market() {
+  fresh claude-unknown
+  claude_market unknown
+  claude_enabled kit@market true
+  claude_enabled lonely@nowhere true
+  deployed || return 1
+  codex_ran plugin install kit@market --scope user || { why="deploy did not install kit@market next to the unregistered one"; return 1; }
+  ! codex_ran plugin install lonely@nowhere --scope user || { why="deploy ran claude plugin install for a plugin whose marketplace Claude Code lacks"; return 1; }
+}
+
+# A --source run installs the enabled plugin while ~/.shared exists, and installs nothing without ~/.shared.
+no_claude_install_without_main() {
+  local extra="$T/extra-claude"
+  mkdir -p "$extra/skills/eta"
+  printf -- '---\nname: eta\ndescription: Eta.\n---\nEta.\n' > "$extra/skills/eta/SKILL.md"
+  fresh claude-main
+  claude_market main
+  claude_enabled kit@market true
+  run deploy --source "$extra"
+  [ "$rc" = 0 ] || { why="deploy --source with ~/.shared exited $rc: $(tail -1 "$T/out")"; return 1; }
+  claude_has_user_record kit || { why="a --source run with ~/.shared did not install kit@market"; return 1; }
+  fresh claude-nomain
+  claude_market nomain
+  claude_enabled kit@market true
+  rm -rf "$HOME/.shared"
+  run deploy --source "$extra"
+  [ "$rc" = 0 ] || { why="deploy --source without ~/.shared exited $rc: $(tail -1 "$T/out")"; return 1; }
+  ! codex_ran plugin install kit@market --scope user || { why="deploy ran claude plugin install without ~/.shared"; return 1; }
+}
+
+without_claude_names_enabled() {
+  fresh claude-missing
+  claude_market missing
+  claude_enabled kit@market true
+  export AGENT_SHARED_CLAUDE_BIN="$T/bin/no-such-claude"
+  deployed || return 1
+  grep '^warning: ' "$T/out" | grep -qF 'kit@market' || { why="no warning named kit@market left uninstalled"; return 1; }
+  [ -L "$HOME/.agents/skills/alpha" ] || { why="the other agents were not deployed"; return 1; }
+}
+
+definition_claude_plugins() {
+  local f
+  for f in README.md README.ja.md spec/agent-shared.md spec/agent-shared.ja.md; do
+    grep -qF 'claude plugin install' "$ROOT/$f" || { why="$f does not name claude plugin install"; return 1; }
+    grep -qF 'enabledPlugins' "$ROOT/$f" || { why="$f does not name enabledPlugins"; return 1; }
   done
 }
 
@@ -2433,6 +2589,12 @@ check "a deploy without ~/.shared installs no enabled plugin" no_install_without
 check "deploy names an enabled plugin whose marketplace Codex lacks and installs the rest" names_enabled_without_market
 check "without codex the run names the enabled plugins left uninstalled" without_codex_names_enabled
 check "the definition and the READMEs describe installing the enabled plugins" definition_enabled_plugins
+check "deploy installs the Claude Code plugins enabledPlugins turns on" installs_claude_enabled
+check "deploy installs no Claude Code plugin set to false or already installed" skips_claude_false_or_installed
+check "deploy leaves a plugin of an unregistered marketplace to Claude Code" leaves_unregistered_claude_market
+check "a deploy without ~/.shared installs no Claude Code plugin" no_claude_install_without_main
+check "without claude the run names the Claude Code plugins left uninstalled" without_claude_names_enabled
+check "the definition and the READMEs describe installing the Claude Code plugins" definition_claude_plugins
 check "deploy in a repository links its skills into its own folders" repo_skills
 check "a removed skill, rule, or hook is taken out on the next run" removes_taken_out
 check "entries without the mark are left unchanged" leaves_unmarked
