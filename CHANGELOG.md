@@ -5,6 +5,8 @@ Versions follow semantic versioning, and each release is tagged `v<version>`.
 
 ## [Unreleased]
 
+- A run that deploys `~/.shared` installs, with `claude plugin install <plugin>@<marketplace> --scope user`, each plugin that `enabledPlugins` in `~/.claude/settings.json` turns on, whose marketplace Claude Code has registered, and that Claude Code has not installed at user scope, since Claude Code does not install those on its own. A plugin of a marketplace Claude Code has not registered is left to Claude Code (#49)
+
 ## [0.4.0] - 2026-11-27
 
 - A rule with frontmatter that scopes it (`paths:`, `globs:`, `applyTo:`, `alwaysApply:`, or `description:`) goes into Codex's and GitHub Copilot CLI's block without its frontmatter, under one quoted line that says where it applies; Claude Code gets a copy rewritten to `paths:` for a rule scoped with `globs:` or `applyTo:`, and a copy that starts with that line for a rule scoped only by `description:`. A rule whose frontmatter is not closed is refused (#43)

@@ -851,7 +851,12 @@ def trust_codex_plugin_hooks(plugin_ids):
 
 def run_codex(command, args):
     """Runs `codex <args>` with the settings in ~/.codex. Returns None when it worked, or the reason it did not."""
-    env = dict(os.environ, CODEX_HOME=os.path.join(home(), ".codex"))
+    return run_tool(command, args, dict(os.environ, CODEX_HOME=os.path.join(home(), ".codex")))
+
+
+def run_tool(command, args, env=None):
+    """Runs `<command> <args>` with nothing on standard input. Returns None when it worked, or the reason it did
+    not."""
     try:
         done = subprocess.run([command] + args, stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env,
                               timeout=PLUGIN_COMMAND_TIMEOUT)
@@ -863,6 +868,60 @@ def run_codex(command, args):
         return None
     said = (done.stderr or done.stdout or "").strip().splitlines()
     return "it exited {}{}".format(done.returncode, ": " + said[0] if said else "")
+
+
+def claude_command():
+    """The claude command to run, or None when it is not on PATH."""
+    name = os.environ.get("AGENT_SHARED_CLAUDE_BIN", "claude")
+    return shutil.which(name) if name else None
+
+
+def ensure_claude_plugins(notes, warnings):
+    """Installs at user scope each plugin that `enabledPlugins` in ~/.claude/settings.json sets to true, whose
+    marketplace ~/.claude/plugins/known_marketplaces.json holds, and that installed_plugins.json has no user-scope
+    record of. Claude Code clones a marketplace its settings declare and fetches that marketplace's enabled plugins
+    on its own, but its loading reference does not say it installs an enabled plugin of a marketplace it already
+    has (#49), so a plugin of a marketplace it has not registered is left to it."""
+    base = os.path.join(home(), ".claude")
+    settings_path = os.path.join(base, "settings.json")
+    known_path = os.path.join(base, "plugins", "known_marketplaces.json")
+    installed_path = os.path.join(base, "plugins", "installed_plugins.json")
+    try:
+        settings = read_json(settings_path, "Claude Code's settings") if os.path.exists(settings_path) else {}
+        known = read_json(known_path, "Claude Code's marketplace list") if os.path.exists(known_path) else {}
+        installed = read_json(installed_path, "Claude Code's plugin list") if os.path.exists(installed_path) else {}
+    except Usage as error:
+        warnings.append("{}, so no Claude Code plugin was installed".format(error))
+        return
+    enabled = settings.get("enabledPlugins") if isinstance(settings, dict) else None
+    records = installed.get("plugins") if isinstance(installed, dict) else None
+    records = records if isinstance(records, dict) else {}
+    known = known if isinstance(known, dict) else {}
+    missing = []
+    for plugin, on in (enabled.items() if isinstance(enabled, dict) else []):
+        name, at, market = plugin.partition("@")
+        if on is not True or not (name and at and market) or "@" in market or market not in known:
+            continue
+        entries = records.get(plugin)
+        if isinstance(entries, list) and any(isinstance(entry, dict) and entry.get("scope") == "user"
+                                             for entry in entries):
+            continue
+        missing.append(plugin)
+    if not missing:
+        return
+    command = claude_command()
+    if command is None:
+        warnings.append("Claude Code was not found, so the plugins {} that {} turns on are not installed yet. "
+                        "Install each with `claude plugin install <plugin>@<marketplace> --scope user`."
+                        .format(", ".join(missing), shown(settings_path)))
+        return
+    for plugin in missing:
+        reason = run_tool(command, ["plugin", "install", plugin, "--scope", "user"])
+        if reason:
+            warnings.append("the Claude Code plugin {} could not be installed ({}); run "
+                            "`claude plugin install {} --scope user`".format(plugin, reason, plugin))
+        else:
+            notes.append("installed the Claude Code plugin {}".format(plugin))
 
 
 def enabled_codex_plugins(settings):
@@ -1447,11 +1506,13 @@ def deploy(extra_sources, repo_argument):
     for place in sorted(trust_by_hand & set(hooks_text)):
         warnings.append("Codex runs a repository's hooks only after you trust them: open /hooks in Codex once "
                         "and trust the hooks in {}.".format(shown(place)))
-    # The plugins ~/.codex/config.toml enables are installed under the same condition as plugins.json is read:
-    # only a run that deploys the person's own source ~/.shared (#45).
-    if any(os.path.realpath(source.path) == main_path for source in run) \
-            and any(row.get("plugins") == "codex" and row["name"] in written_agents for row in table):
+    # The plugins ~/.codex/config.toml and enabledPlugins in ~/.claude/settings.json turn on are installed under the
+    # same condition as plugins.json is read: only a run that deploys the person's own source ~/.shared (#45, #49).
+    deploys_main = any(os.path.realpath(source.path) == main_path for source in run)
+    if deploys_main and any(row.get("plugins") == "codex" and row["name"] in written_agents for row in table):
         ensure_codex_plugins(listing or {"marketplaces": {}, "plugins": []}, notes, warnings)
+    if deploys_main and any(row.get("plugins") == "claude" and row["name"] in written_agents for row in table):
+        ensure_claude_plugins(notes, warnings)
 
     for line in notes:
         print(line)

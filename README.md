@@ -188,15 +188,22 @@ So a run that deploys `~/.shared` also installs, with `codex plugin add`, each p
 It writes no trust for the hooks of those plugins; name a plugin in `plugins.json` to have its hooks trusted.
 A plugin whose marketplace Codex has not registered, and that `plugins.json` gives no git URL for, is named with the commands to run, and the other plugins are still installed.
 
+### Plugins your Claude Code settings turn on
+
+Claude Code fetches the enabled plugins of a marketplace your settings declare when it clones that marketplace, but it does not install an enabled plugin of a marketplace it has already registered.
+So a run that deploys `~/.shared` also runs `claude plugin install <plugin>@<marketplace> --scope user` for each plugin that `enabledPlugins` in `~/.claude/settings.json` sets to `true`, whose marketplace is in `~/.claude/plugins/known_marketplaces.json`, and that `~/.claude/plugins/installed_plugins.json` has no user-scope record of.
+A plugin of a marketplace Claude Code has not registered is left to Claude Code.
+Without the `claude` command, the run names the plugins it left uninstalled.
+
 ## What it reads, writes, and keeps
 
 | Kind | Paths |
 |---|---|
-| Reads | The source folders, `~/.claude/plugins/installed_plugins.json`, `enabledPlugins` in `~/.claude/settings.json`, `~/.codex/config.toml`, and the skill folders under `~/.codex/plugins/cache`. `placed` reads only the record and the places in the agent table |
+| Reads | The source folders, `~/.claude/plugins/installed_plugins.json`, `~/.claude/plugins/known_marketplaces.json`, `enabledPlugins` in `~/.claude/settings.json`, `~/.codex/config.toml`, and the skill folders under `~/.codex/plugins/cache`. `placed` reads only the record and the places in the agent table |
 | Writes | The places in the agent table, only for what it placed itself |
 | Keeps | `~/.local/share/agent-shared/placed.json`, readable only by you, which names each link and rewritten rule copy it placed and each source you approved, and `off.json` beside it, the switch list that `agent-shared off` and `agent-shared on` write and that `agent-shared remove` drops the removed source's entries from. `AGENT_SHARED_STATE` moves the folder |
-| Runs | `codex app-server`, to write Codex's trust for the hooks it placed and for the hooks of the plugins `~/.shared/plugins.json` names, and `codex plugin marketplace add` and `codex plugin add` for the marketplaces and plugins Codex does not have yet. `AGENT_SHARED_CODEX_BIN` names another `codex` command |
-| Sends | Nothing itself. `codex plugin marketplace add` and `codex plugin add` fetch the marketplaces and plugins that `~/.shared/plugins.json` names and the plugins that `~/.codex/config.toml` enables |
+| Runs | `codex app-server`, to write Codex's trust for the hooks it placed and for the hooks of the plugins `~/.shared/plugins.json` names, and `codex plugin marketplace add` and `codex plugin add` for the marketplaces and plugins Codex does not have yet, and `claude plugin install` for the plugins `enabledPlugins` turns on that Claude Code does not have yet. `AGENT_SHARED_CODEX_BIN` and `AGENT_SHARED_CLAUDE_BIN` name another `codex` or `claude` command |
+| Sends | Nothing itself. `codex plugin marketplace add` and `codex plugin add` fetch the marketplaces and plugins that `~/.shared/plugins.json` names and the plugins that `~/.codex/config.toml` enables, and `claude plugin install` fetches the plugins that `enabledPlugins` turns on |
 
 ## How it tells its own entries apart
 
