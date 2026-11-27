@@ -5,6 +5,8 @@ Versions follow semantic versioning, and each release is tagged `v<version>`.
 
 ## [Unreleased]
 
+- A deploy without `--source` refreshes the Git marketplace of each Codex plugin `~/.shared/plugins.json` names with `codex plugin marketplace upgrade`, and installs with `codex plugin add` the version it offers when that is newer than the one Codex has, so Codex runs the released version and trusts its new hooks. A run with `--source` leaves installed plugins as they are, and a failed refresh or install is named with the versions and the command to run (#53)
+
 ## [0.5.0] - 2026-11-27
 
 - A run that deploys `~/.shared` installs, with `claude plugin install <plugin>@<marketplace> --scope user`, each plugin that `enabledPlugins` in `~/.claude/settings.json` turns on, whose marketplace Claude Code has registered, and that Claude Code has not installed at user scope, since Claude Code does not install those on its own. A plugin of a marketplace Claude Code has not registered is left to Claude Code (#49)
