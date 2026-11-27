@@ -851,23 +851,35 @@ def trust_codex_plugin_hooks(plugin_ids):
 
 def run_codex(command, args):
     """Runs `codex <args>` with the settings in ~/.codex. Returns None when it worked, or the reason it did not."""
-    return run_tool(command, args, dict(os.environ, CODEX_HOME=os.path.join(home(), ".codex")))
+    return codex_output(command, args)[1]
+
+
+def codex_output(command, args):
+    """Runs `codex <args>` with the settings in ~/.codex. Returns (its standard output, None) when it worked, or
+    (None, the reason it did not)."""
+    return tool_output(command, args, dict(os.environ, CODEX_HOME=os.path.join(home(), ".codex")))
 
 
 def run_tool(command, args, env=None):
     """Runs `<command> <args>` with nothing on standard input. Returns None when it worked, or the reason it did
     not."""
+    return tool_output(command, args, env)[1]
+
+
+def tool_output(command, args, env=None):
+    """Runs `<command> <args>` with nothing on standard input. Returns (its standard output, None) when it worked, or
+    (None, the reason it did not)."""
     try:
         done = subprocess.run([command] + args, stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env,
                               timeout=PLUGIN_COMMAND_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return "it did not end in {} seconds".format(PLUGIN_COMMAND_TIMEOUT)
+        return None, "it did not end in {} seconds".format(PLUGIN_COMMAND_TIMEOUT)
     except OSError as error:
-        return "{}".format(error.strerror or error)
+        return None, "{}".format(error.strerror or error)
     if done.returncode == 0:
-        return None
+        return done.stdout, None
     said = (done.stderr or done.stdout or "").strip().splitlines()
-    return "it exited {}{}".format(done.returncode, ": " + said[0] if said else "")
+    return None, "it exited {}{}".format(done.returncode, ": " + said[0] if said else "")
 
 
 def claude_command():
@@ -938,12 +950,83 @@ def enabled_codex_plugins(settings):
     return enabled
 
 
-def ensure_codex_plugins(listing, notes, warnings):
+def offered_version(folder):
+    """The version that `.codex-plugin/plugin.json` in a plugin folder of a marketplace snapshot names, or None."""
+    try:
+        with open(os.path.join(folder, ".codex-plugin", "plugin.json"), encoding="utf-8") as handle:
+            version = json.load(handle).get("version")
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+    return version if isinstance(version, str) else None
+
+
+def is_newer(offered, installed):
+    """Whether the version `offered` is above `installed`, both written as dotted numbers. A version written another
+    way is never newer, so a deploy installs nothing it cannot compare."""
+    try:
+        return version_key(offered) > version_key(installed)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def refresh_codex_markets(command, tables, markets, warnings):
+    """Refreshes the snapshot Codex keeps of each Git marketplace in `markets` that its settings `tables` hold, so a
+    newer version it offers can be installed (#53). A marketplace that cannot be refreshed is named with the command
+    to run, and the rest of the deploy goes on."""
+    for market in sorted(markets):
+        table = tables.get(market)
+        if not isinstance(table, dict) or table.get("source_type") != "git":
+            continue
+        reason = run_codex(command, ["plugin", "marketplace", "upgrade", market])
+        if reason:
+            warnings.append("the Codex marketplace {} could not be refreshed ({}), so its named plugins may stay at an "
+                            "older version; run `codex plugin marketplace upgrade {}`".format(market, reason, market))
+
+
+def upgrade_codex_plugins(command, plugins, markets, notes, warnings):
+    """Installs, for each plugin of the list that Codex has at an older version than its marketplace snapshot
+    offers, the offered version with `codex plugin add`, which replaces the version installed (#53). Codex reports
+    the version installed and the snapshot folder of each plugin in `codex plugin list --json`."""
+    for market in sorted(markets):
+        output, reason = codex_output(command, ["plugin", "list", "--json", "-m", market])
+        rows = None
+        if reason is None:
+            try:
+                answer = json.loads(output or "")
+            except ValueError:
+                answer, reason = None, "its answer is not JSON"
+            rows = answer.get("installed") if isinstance(answer, dict) else None
+        if not isinstance(rows, list):
+            warnings.append("Codex could not list the plugins of the marketplace {} ({}), so its named plugins were "
+                            "not checked for a newer version; run `codex plugin list -m {}`"
+                            .format(market, reason or "its answer has no installed list", market))
+            continue
+        for row in rows:
+            plugin = row.get("pluginId") if isinstance(row, dict) else None
+            if plugin not in plugins:
+                continue
+            source = row.get("source")
+            path = source.get("path") if isinstance(source, dict) and source.get("source") == "local" else None
+            offered = offered_version(path) if isinstance(path, str) and path else None
+            installed = row.get("version")
+            if not is_newer(offered, installed):
+                continue
+            reason = run_codex(command, ["plugin", "add", plugin])
+            if reason:
+                warnings.append("the Codex plugin {} could not be upgraded from {} to {} ({}); run "
+                                "`codex plugin add {}`".format(plugin, installed, offered, reason, plugin))
+            else:
+                notes.append("upgraded the Codex plugin {} from {} to {}".format(plugin, installed, offered))
+
+
+def ensure_codex_plugins(listing, notes, warnings, upgrade=False):
     """Registers the missing marketplaces of the plugin list in Codex, installs the plugins of the list and the
     plugins ~/.codex/config.toml enables that Codex does not have, and trusts every hook of the list's plugins for
-    the current command. A plugin already installed is left as it is. Codex does not install a plugin its settings
-    enable, so a settings file kept in a repository would otherwise enable plugins no machine has (#45); the hooks
-    of a plugin only the settings enable keep Codex's own check."""
+    the current command. Codex does not install a plugin its settings enable, so a settings file kept in a
+    repository would otherwise enable plugins no machine has (#45); the hooks of a plugin only the settings enable
+    keep Codex's own check. With `upgrade`, it first refreshes the Git marketplaces of the list's plugins, and
+    installs the offered version of each listed plugin Codex has at an older one (#53); a run without `upgrade`
+    leaves an installed plugin as it is and does not reach the network for it."""
     plugins = listing["plugins"]
     named = ", ".join(plugins)
     codex_home = os.path.join(home(), ".codex")
@@ -990,6 +1073,9 @@ def ensure_codex_plugins(listing, notes, warnings):
                             "`codex plugin marketplace add {}`".format(market, url, reason, url))
         else:
             notes.append("registered the Codex marketplace {} from {}".format(market, url))
+    listed_markets = {plugin.partition("@")[2] for plugin in plugins} - failed
+    if upgrade:
+        refresh_codex_markets(command, settings.get("marketplaces") or {}, listed_markets, warnings)
     for plugin in plugins + enabled:
         name, _, market = plugin.partition("@")
         if market in failed and market not in listing["marketplaces"]:
@@ -1005,6 +1091,8 @@ def ensure_codex_plugins(listing, notes, warnings):
                             .format(plugin, reason, plugin))
         else:
             notes.append("installed the Codex plugin {}".format(plugin))
+    if upgrade:
+        upgrade_codex_plugins(command, set(plugins), listed_markets, notes, warnings)
     if not plugins:
         return
     try:
@@ -1508,9 +1596,12 @@ def deploy(extra_sources, repo_argument):
                         "and trust the hooks in {}.".format(shown(place)))
     # The plugins ~/.codex/config.toml and enabledPlugins in ~/.claude/settings.json turn on are installed under the
     # same condition as plugins.json is read: only a run that deploys the person's own source ~/.shared (#45, #49).
+    # Only a run without --source refreshes the marketplaces and upgrades the named Codex plugins, so the runs of the
+    # settings guard, which pass --source, stay fast and work offline (#53).
     deploys_main = any(os.path.realpath(source.path) == main_path for source in run)
     if deploys_main and any(row.get("plugins") == "codex" and row["name"] in written_agents for row in table):
-        ensure_codex_plugins(listing or {"marketplaces": {}, "plugins": []}, notes, warnings)
+        ensure_codex_plugins(listing or {"marketplaces": {}, "plugins": []}, notes, warnings,
+                             upgrade=not extra_sources)
     if deploys_main and any(row.get("plugins") == "claude" and row["name"] in written_agents for row in table):
         ensure_claude_plugins(notes, warnings)
 

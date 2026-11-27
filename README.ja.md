@@ -182,6 +182,10 @@ hookを信頼するCodexのプラグインを、各プラグインのマーケ�
 
 deployは毎回、Codexに無いマーケットプレイスを`codex plugin marketplace add`で登録し、Codexに無いプラグインを`codex plugin add`で入れ、書いたプラグインの全てのhookに今の命令でCodexの信頼の印を書きます。
 更新で変わったhookは、`/hooks`を開かなくても次のdeployでもう一度信頼されます。
+`--source`を付けないdeployは、書いたプラグインのgitのマーケットプレイスについてCodexが持つ写しを`codex plugin marketplace upgrade <marketplace>`で取り直し、Codexに入っている物より新しいバージョンをそのマーケットプレイスが出していれば`codex plugin add`で入れます。
+こうしてCodexは出したバージョンで動き、新しいhookも信頼されます。
+設定の見張りがhookを戻す時のような`--source`を付けた実行は、入っているプラグインをそのままにし、そのためにネットワークへ繋ぎません。
+取り直しか入れ直しに失敗した時は、マーケットプレイスかプラグインを2つのバージョンと打つ命令と一緒に名指し、ほかは全て書きます。
 hookを信頼するとそのhookはどんな命令も動かせるので、読むのは`~/.shared/plugins.json`だけです。他の配る元やリポジトリの`.shared`にある`plugins.json`は読まず、実行の出力で名指します。
 一覧から外したプラグインは入ったまま信頼も残ります。消す時は`codex plugin remove <plugin>@<marketplace>`を実行します。
 `codex`のコマンドが無い時は、入れられなかったプラグインと信頼できなかったプラグインを実行の出力で名指します。
@@ -209,8 +213,8 @@ Claude Codeが登録していないマーケットプレイスのプラグイン
 | 読む物 | 配る元のフォルダー、`~/.claude/plugins/installed_plugins.json`、`~/.claude/plugins/known_marketplaces.json`、`~/.claude/settings.json`の`enabledPlugins`、`~/.codex/config.toml`、`~/.codex/plugins/cache`の下のスキルのフォルダー。`placed`は記録とエージェントの表の置き場だけを読む |
 | 書く物 | エージェントの表の置き場。自分が置いた物だけ |
 | 残す物 | `~/.local/share/agent-shared/placed.json`。あなただけが読め、置いたリンクと書き換えたルールの写しと認めた配る元を1つずつ記録する。その隣の`off.json`は、`agent-shared off`と`agent-shared on`が書く切った物の一覧で、`agent-shared remove`は外した配る元の項目をそこから消す。`AGENT_SHARED_STATE`でフォルダーを変えられる |
-| 動かす物 | `codex app-server`。置いたhookと、`~/.shared/plugins.json`が書くプラグインのhookにCodexの信頼の印を書くため。Codexにまだ無いマーケットプレイスとプラグインのために`codex plugin marketplace add`と`codex plugin add`。Claude Codeにまだ無い、`enabledPlugins`が有効にするプラグインのために`claude plugin install`。`AGENT_SHARED_CODEX_BIN`と`AGENT_SHARED_CLAUDE_BIN`で別の`codex`と`claude`のコマンドを指せる |
-| 送る物 | 自分では何も送らない。`codex plugin marketplace add`と`codex plugin add`が、`~/.shared/plugins.json`が書くマーケットプレイスとプラグインと、`~/.codex/config.toml`が有効にするプラグインを取ってくる。`claude plugin install`が、`enabledPlugins`が有効にするプラグインを取ってくる |
+| 動かす物 | `codex app-server`。置いたhookと、`~/.shared/plugins.json`が書くプラグインのhookにCodexの信頼の印を書くため。Codexにまだ無いマーケットプレイスとプラグインのために`codex plugin marketplace add`と`codex plugin add`。`--source`を付けない実行で書いたプラグインを上げるために`codex plugin marketplace upgrade`と`codex plugin list --json`と`codex plugin add`。Claude Codeにまだ無い、`enabledPlugins`が有効にするプラグインのために`claude plugin install`。`AGENT_SHARED_CODEX_BIN`と`AGENT_SHARED_CLAUDE_BIN`で別の`codex`と`claude`のコマンドを指せる |
+| 送る物 | 自分では何も送らない。`codex plugin marketplace add`と`codex plugin marketplace upgrade`と`codex plugin add`が、`~/.shared/plugins.json`が書くマーケットプレイスとプラグインと、`~/.codex/config.toml`が有効にするプラグインを取ってくる。`claude plugin install`が、`enabledPlugins`が有効にするプラグインを取ってくる |
 
 ## 自分が置いた物の見分け方
 

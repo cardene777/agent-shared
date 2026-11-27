@@ -30,7 +30,12 @@ check() {
 # plugins installed under $CODEX_HOME/plugins/cache with a hash of each command, reports an empty trust
 # state (or the one kept in $STUB_STATE), accepts every write, and logs each message to $STUB_LOG.
 # `codex plugin marketplace add <folder>` and `codex plugin add <plugin>@<marketplace>` work on a
-# throwaway marketplace folder (see plugin_market) and log their arguments to $STUB_LOG.
+# throwaway marketplace folder (see plugin_market) and log their arguments to $STUB_LOG. `codex plugin add`
+# installs the version the plugin's .codex-plugin/plugin.json names (1.0.0 without one) in place of the one
+# installed. A Git marketplace (see git_market_registered) is read from its snapshot under
+# $CODEX_HOME/.tmp/marketplaces, which `codex plugin marketplace upgrade <name>` copies again from $STUB_REMOTE.
+# `codex plugin list --json -m <name>` reports each installed plugin with its version and its snapshot folder.
+# STUB_FAIL_UPGRADE and STUB_FAIL_ADD make the refresh and the install fail.
 mkdir -p "$T/bin"
 cat > "$T/bin/codex" <<'PY'
 #!/usr/bin/env python3
@@ -52,6 +57,22 @@ def append_config(text):
         handle.write(text)
 
 
+def read_config():
+    return tomllib.load(open(config, "rb")) if os.path.exists(config) else {}
+
+
+def market_root(market):
+    table = (read_config().get("marketplaces") or {}).get(market) or {}
+    if table.get("source_type") == "git":
+        return os.path.join(home, ".tmp", "marketplaces", market)
+    return table.get("source")
+
+
+def plugin_version(folder):
+    path = os.path.join(folder, ".codex-plugin", "plugin.json")
+    return json.load(open(path)).get("version", "1.0.0") if os.path.exists(path) else "1.0.0"
+
+
 if sys.argv[1:2] == ["plugin"]:
     if log:
         with open(log, "a") as handle:
@@ -61,16 +82,50 @@ if sys.argv[1:2] == ["plugin"]:
         name = open(os.path.join(args[2], "name")).read().strip()
         append_config('\n[marketplaces.%s]\nsource_type = "local"\nsource = "%s"\n' % (name, args[2]))
         sys.exit(0)
+    if args[:2] == ["marketplace", "upgrade"] and len(args) == 3:
+        if os.environ.get("STUB_FAIL_UPGRADE"):
+            print("could not fetch the marketplace %s" % args[2], file=sys.stderr)
+            sys.exit(1)
+        table = (read_config().get("marketplaces") or {}).get(args[2]) or {}
+        remote = os.environ.get("STUB_REMOTE")
+        if table.get("source_type") != "git" or not remote:
+            print("marketplace %s is not a configured Git marketplace" % args[2], file=sys.stderr)
+            sys.exit(1)
+        root = market_root(args[2])
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.copytree(remote, root)
+        sys.exit(0)
+    if args[:1] == ["list"] and "--json" in args:
+        wanted = args[args.index("-m") + 1] if "-m" in args else None
+        cache = os.path.join(home, "plugins", "cache")
+        rows = []
+        for market in sorted(os.listdir(cache)) if os.path.isdir(cache) else []:
+            if wanted and market != wanted:
+                continue
+            root = market_root(market) or ""
+            for plugin in sorted(os.listdir(os.path.join(cache, market))):
+                versions = sorted(os.listdir(os.path.join(cache, market, plugin)))
+                if versions:
+                    rows.append({"pluginId": "%s@%s" % (plugin, market), "name": plugin, "marketplaceName": market,
+                                 "version": versions[-1], "installed": True, "enabled": True,
+                                 "source": {"source": "local", "path": os.path.join(root, "plugins", plugin)}})
+        print(json.dumps({"installed": rows, "available": []}))
+        sys.exit(0)
     if args[:1] == ["add"] and len(args) == 2 and "@" in args[1]:
+        if os.environ.get("STUB_FAIL_ADD"):
+            print("could not install %s" % args[1], file=sys.stderr)
+            sys.exit(1)
         plugin, market = args[1].split("@", 1)
-        data = tomllib.load(open(config, "rb")) if os.path.exists(config) else {}
-        source = ((data.get("marketplaces") or {}).get(market) or {}).get("source")
-        if not source:
+        root = market_root(market)
+        if not root:
             print("marketplace %s is not configured" % market, file=sys.stderr)
             sys.exit(1)
-        shutil.copytree(os.path.join(source, "plugins", plugin),
-                        os.path.join(home, "plugins", "cache", market, plugin, "1.0.0"))
-        append_config('\n[plugins."%s"]\nenabled = true\n' % args[1])
+        folder = os.path.join(root, "plugins", plugin)
+        place = os.path.join(home, "plugins", "cache", market, plugin)
+        shutil.rmtree(place, ignore_errors=True)
+        shutil.copytree(folder, os.path.join(place, plugin_version(folder)))
+        if args[1] not in (read_config().get("plugins") or {}):
+            append_config('\n[plugins."%s"]\nenabled = true\n' % args[1])
         sys.exit(0)
     sys.exit(2)
 if sys.argv[1:] != ["app-server"]:
@@ -176,7 +231,7 @@ fresh() {
   export AGENT_SHARED_CODEX_BIN="$T/bin/codex"
   export AGENT_SHARED_CLAUDE_BIN="$T/bin/claude"
   export STUB_LOG="$HOME/codex-calls.jsonl"
-  unset AGENT_SHARED_STATE STUB_STATE MARKET
+  unset AGENT_SHARED_STATE STUB_STATE MARKET STUB_REMOTE STUB_FAIL_UPGRADE STUB_FAIL_ADD
   RUN_DIR="$HOME"
   mkdir -p "$HOME/.shared/skills/alpha" "$HOME/.shared/skills/beta" "$HOME/.shared/rules" "$HOME/.claude" "$HOME/.codex"
   printf -- '---\nname: alpha\ndescription: Alpha.\n---\nAlpha.\n' > "$HOME/.shared/skills/alpha/SKILL.md"
@@ -394,11 +449,35 @@ market_registered() {
   printf '\n[marketplaces.market]\nsource_type = "local"\nsource = "%s"\n' "$MARKET" >> "$HOME/.codex/config.toml"
 }
 
-# Installs the plugin $1 of the marketplace in the throwaway Codex without agent-shared.
+# Registers the marketplace in the throwaway Codex as a Git marketplace, as `codex plugin marketplace add <git URL>`
+# does: its snapshot is a copy of $MARKET now, and `codex plugin marketplace upgrade market` copies $MARKET again.
+git_market_registered() {
+  printf '\n[marketplaces.market]\nsource_type = "git"\nsource = "https://example.invalid/market.git"\n' >> "$HOME/.codex/config.toml"
+  mkdir -p "$HOME/.codex/.tmp/marketplaces"
+  cp -R "$MARKET" "$HOME/.codex/.tmp/marketplaces/market"
+  export STUB_REMOTE="$MARKET"
+}
+
+# Installs the plugin $1 of the marketplace in the throwaway Codex without agent-shared, as version $2 (1.0.0).
 plugin_installed() {
   mkdir -p "$HOME/.codex/plugins/cache/market/$1"
-  cp -R "$MARKET/plugins/$1" "$HOME/.codex/plugins/cache/market/$1/1.0.0"
+  cp -R "$MARKET/plugins/$1" "$HOME/.codex/plugins/cache/market/$1/${2:-1.0.0}"
   printf '\n[plugins."%s@market"]\nenabled = true\n' "$1" >> "$HOME/.codex/config.toml"
+}
+
+# Makes the marketplace offer version $2 of the plugin $1, whose first hook's command changes with the version.
+plugin_offered() {
+  python3 - "$MARKET/plugins/$1" "$2" <<'PY'
+import json, os, sys
+folder, version = sys.argv[1:]
+os.makedirs(os.path.join(folder, ".codex-plugin"), exist_ok=True)
+json.dump({"name": os.path.basename(folder), "version": version}, open(os.path.join(folder, ".codex-plugin", "plugin.json"), "w"))
+path = os.path.join(folder, "hooks", "hooks.json")
+data = json.load(open(path))
+first = next(iter(data["hooks"].values()))[0]["hooks"][0]
+first["command"] += " --version-" + version
+json.dump(data, open(path, "w"))
+PY
 }
 
 # The trusted hashes the stand-in keeps for the hooks of the plugin $1, as sorted "key hash" lines.
@@ -413,9 +492,9 @@ for key, entry in state.items():
 PY
 }
 
-# The current hashes of the hooks of the installed plugin $1, as sorted "key hash" lines.
+# The current hashes of the hooks of version $2 (1.0.0) of the installed plugin $1, as sorted "key hash" lines.
 current_of() {
-  python3 - "$HOME/.codex/plugins/cache/market/$1/1.0.0/hooks/hooks.json" "$1@market" <<'PY' | LC_ALL=C sort
+  python3 - "$HOME/.codex/plugins/cache/market/$1/${2:-1.0.0}/hooks/hooks.json" "$1@market" <<'PY' | LC_ALL=C sort
 import hashlib, json, sys
 path, plugin = sys.argv[1:]
 for event, groups in json.load(open(path))["hooks"].items():
@@ -512,6 +591,102 @@ keeps_taken_off() {
   [ -d "$HOME/.codex/plugins/cache/market/guard-one" ] || { why="guard-one was removed from Codex"; return 1; }
   [ "$(trusted_of guard-one)" = "$before" ] || { why="the trust of guard-one changed after it left the list"; return 1; }
   ! grep -qF '"remove"' "$STUB_LOG" || { why="deploy ran codex plugin remove"; return 1; }
+}
+
+# The named plugin guard-one is installed at 1.0.0 from a Git marketplace that now offers version $2 (1.1.0) of it
+# with a changed hook. The snapshot Codex keeps still holds the version before.
+upgrade_setup() {
+  fresh "$1"
+  plugin_market "$1"
+  git_market_registered
+  plugin_installed guard-one
+  plugins_json "$HOME/.shared" guard-one@market
+  plugin_offered guard-one "${2:-1.1.0}"
+}
+
+upgrades_named_plugin() {
+  upgrade_setup plugin-upgrade
+  deployed || return 1
+  codex_ran plugin marketplace upgrade market || { why="deploy did not run codex plugin marketplace upgrade market"; return 1; }
+  codex_ran plugin add guard-one@market || { why="deploy did not run codex plugin add guard-one@market"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/guard-one/1.1.0" ] || { why="Codex does not have guard-one 1.1.0"; return 1; }
+  [ ! -e "$HOME/.codex/plugins/cache/market/guard-one/1.0.0" ] || { why="Codex still has guard-one 1.0.0"; return 1; }
+}
+
+trusts_upgraded_hooks() {
+  upgrade_setup plugin-upgrade-trust
+  deployed || return 1
+  local trusted current
+  trusted="$(trusted_of guard-one)"
+  current="$(current_of guard-one 1.1.0 2> /dev/null)"
+  [ -n "$current" ] && [ "$trusted" = "$current" ] || { why="trusted [$trusted], hooks of guard-one 1.1.0 [$current]"; return 1; }
+}
+
+failed_refresh_warns() {
+  upgrade_setup plugin-refresh-fail
+  export STUB_FAIL_UPGRADE=1
+  deployed || return 1
+  grep '^warning: ' "$T/out" | grep -F 'market' | grep -qF 'codex plugin marketplace upgrade market' \
+    || { why="no warning names the marketplace with codex plugin marketplace upgrade market"; return 1; }
+  links_to "$HOME/.claude/skills/alpha" "$HOME/.shared/skills/alpha" || { why="the skills were not placed"; return 1; }
+}
+
+failed_upgrade_warns() {
+  upgrade_setup plugin-upgrade-fail
+  export STUB_FAIL_ADD=1
+  deployed || return 1
+  grep '^warning: ' "$T/out" | grep -F 'guard-one@market' | grep -F '1.0.0' | grep -F '1.1.0' \
+    | grep -qF 'codex plugin add guard-one@market' \
+    || { why="no warning names guard-one@market, 1.0.0, 1.1.0, and codex plugin add guard-one@market"; return 1; }
+  links_to "$HOME/.claude/skills/alpha" "$HOME/.shared/skills/alpha" || { why="the skills were not placed"; return 1; }
+}
+
+leaves_plugin_at_offered() {
+  upgrade_setup plugin-at-offered 1.0.0
+  deployed || return 1
+  ! codex_ran plugin add guard-one@market || { why="deploy ran codex plugin add for guard-one at the offered version"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/guard-one/1.0.0" ] || { why="guard-one is no longer at 1.0.0"; return 1; }
+}
+
+skips_unnamed_upgrade() {
+  upgrade_setup plugin-unnamed-upgrade 1.0.0
+  plugin_installed other
+  plugin_offered other 1.1.0
+  deployed || return 1
+  ! codex_ran plugin add other@market || { why="deploy ran codex plugin add for other, which plugins.json does not name"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/other/1.0.0" ] || { why="other is no longer at 1.0.0"; return 1; }
+}
+
+source_run_skips_upgrade() {
+  local extra="$T/extra-upgrade"
+  mkdir -p "$extra/skills/eta"
+  printf -- '---\nname: eta\ndescription: Eta.\n---\nEta.\n' > "$extra/skills/eta/SKILL.md"
+  upgrade_setup plugin-source-upgrade
+  run deploy --source "$extra"
+  [ "$rc" = 0 ] || { why="deploy --source exited $rc: $(tail -1 "$T/out")"; return 1; }
+  ! codex_ran plugin marketplace upgrade market || { why="a --source deploy refreshed the marketplace"; return 1; }
+  ! codex_ran plugin add guard-one@market || { why="a --source deploy ran codex plugin add guard-one@market"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/guard-one/1.0.0" ] || { why="guard-one is no longer at 1.0.0"; return 1; }
+}
+
+no_downgrade() {
+  fresh plugin-downgrade
+  plugin_market plugin-downgrade
+  git_market_registered
+  plugin_installed guard-one 2.0.0
+  plugins_json "$HOME/.shared" guard-one@market
+  plugin_offered guard-one 1.1.0
+  deployed || return 1
+  ! codex_ran plugin add guard-one@market || { why="deploy installed guard-one 1.1.0 over 2.0.0"; return 1; }
+  [ -d "$HOME/.codex/plugins/cache/market/guard-one/2.0.0" ] || { why="guard-one is no longer at 2.0.0"; return 1; }
+}
+
+definition_plugin_upgrade() {
+  local f
+  for f in README.md README.ja.md spec/agent-shared.md spec/agent-shared.ja.md; do
+    grep -qF 'codex plugin marketplace upgrade' "$ROOT/$f" \
+      || { why="$f does not say that a deploy refreshes the marketplace of a named plugin"; return 1; }
+  done
 }
 
 # A plugins.json in a repository's .shared and in a --source folder is not read, and each is named.
@@ -2576,6 +2751,15 @@ check "deploy registers a missing marketplace from plugins.json" registers_missi
 check "deploy trusts every hook of the named Codex plugins" trusts_named_plugin_hooks
 check "deploy trusts a named plugin's changed hook again" retrusts_changed_hook
 check "a plugin taken off plugins.json keeps its install and trust" keeps_taken_off
+check "a deploy upgrades a named Codex plugin its marketplace offers newer" upgrades_named_plugin
+check "a deploy trusts the new hooks of an upgraded Codex plugin" trusts_upgraded_hooks
+check "a failed marketplace refresh warns and the deploy goes on" failed_refresh_warns
+check "a failed Codex plugin upgrade warns with both versions and the deploy goes on" failed_upgrade_warns
+check "the definition and the READMEs describe upgrading the named Codex plugins" definition_plugin_upgrade
+check "a deploy leaves a named Codex plugin at the offered version alone" leaves_plugin_at_offered
+check "a deploy does not upgrade a Codex plugin plugins.json does not name" skips_unnamed_upgrade
+check "a --source deploy does not upgrade the Codex plugins" source_run_skips_upgrade
+check "a deploy does not downgrade a named Codex plugin" no_downgrade
 check "a plugins.json outside ~/.shared is not read and is named in a warning" outside_plugins_not_read
 check "without codex the run names the plugins left untrusted" without_codex_names_plugins
 check "check refuses a plugins.json of the wrong shape" check_refuses_plugins
