@@ -5,6 +5,8 @@ Versions follow semantic versioning, and each release is tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-27
+
 - A deploy without `--source` refreshes the Git marketplace of each Codex plugin `~/.shared/plugins.json` names with `codex plugin marketplace upgrade`, and installs with `codex plugin add` the version it offers when that is newer than the one Codex has, so Codex runs the released version and trusts its new hooks. A run with `--source` leaves installed plugins as they are, and a failed refresh or install is named with the versions and the command to run (#53)
 
 ## [0.5.0] - 2026-11-27
